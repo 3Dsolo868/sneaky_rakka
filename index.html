@@ -1586,16 +1586,20 @@ function renderTitle(){
   titleText('RAGNHEIÐUR', 234 + bob, 30, '#ffcf6b');
   ctx.font = '13px "Nunito", sans-serif';
   ctx.fillStyle = '#c9cee0';
-  ctx.fillText('a rescue for two, across two homelands', W/2, 274 + bob);
+  ctx.fillText('The itch of the Intestacles', W/2, 274 + bob);
 
   if(Math.floor(frameCount/30) % 2 === 0){
     ctx.font = '14px "Press Start 2P", monospace';
     ctx.fillStyle = '#fff';
     ctx.fillText('PRESS ENTER TO START', W/2, 400);
   }
-  ctx.font = '11px "Nunito", sans-serif';
-  ctx.fillStyle = '#6b7086';
-  ctx.fillText('a handmade gift', W/2, 500);
+  ctx.save();
+  ctx.font = 'bold 16px "Nunito", sans-serif';
+  ctx.fillStyle = '#ffb3c1';
+  ctx.shadowColor = '#ff8fa3';
+  ctx.shadowBlur = 14 + Math.sin(frameCount*0.06) * 5;
+  ctx.fillText('Happy Birthday Sweetheart. Enjoy the Gift! :)', W/2, 498);
+  ctx.restore();
 
   if(justPressed('Enter')){ state = 'select'; selectCursor = 0; sfx.confirm(); }
 }
