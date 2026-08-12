@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sneaky Ragnheiður</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0b0c14;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; }
+  body{
+    background: radial-gradient(circle at 50% 20%, #1b2030 0%, #0b0c14 70%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    min-height:100vh; font-family:'Nunito', system-ui, sans-serif;
+    padding:12px;
+  }
+  #wrap{
+    position:relative; aspect-ratio:16/9;
+    width: min(96vw, calc((94vh - 100px) * 16 / 9), 1900px);
+    box-shadow:0 25px 70px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.05);
+    border-radius:14px; overflow:hidden; background:#000;
+  }
+  canvas{ width:100%; height:100%; display:block; cursor:default; }
+  #hint{
+    margin-top:14px; color:#8a8fa3; font-size:13px; text-align:center;
+    font-family:'Nunito', sans-serif; letter-spacing:.2px; max-width:760px; line-height:1.6;
+  }
+  #hint b{ color:#c9cee0; }
+  #muteBtn{
+    position:absolute; top:10px; right:12px; z-index:5;
+    background:rgba(10,10,16,.55); border:1px solid rgba(255,255,255,.15); color:#eee;
+    width:34px; height:34px; border-radius:8px; cursor:pointer; font-size:16px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #muteBtn:hover{ background:rgba(30,30,40,.75); }
+  a{ color:#8fb2ff; }
+
+  /* ---------- Touch controls ---------- */
+  /* A solid black ribbon BELOW the game view (not overlaid on top of it),
+     so on-screen buttons never cover the action near the ground. Hidden on
+     devices with an accurate mouse-style pointer, so desktop is untouched. */
+  #touchRibbon{
+    display:none; width:100%; max-width:960px; background:#000;
+    align-items:center; justify-content:space-between;
+    padding:10px 5%; gap:16px; box-sizing:border-box;
+    margin-top:10px; border-radius:12px;
+    -webkit-user-select:none; user-select:none;
+  }
+  .tbtn-group{ display:flex; gap:14px; }
+  .tbtn{
+    touch-action:none; display:flex; align-items:center; justify-content:center;
+    width:clamp(48px, 13vw, 66px); aspect-ratio:1/1;
+    border-radius:50%; background:rgba(255,255,255,.08);
+    border:1.5px solid rgba(255,255,255,.3); color:#fff;
+    font-size:22px; line-height:1;
+  }
+  .tbtn:active{ background:rgba(255,255,255,.28); }
+  #btnPause{
+    position:absolute; top:10px; right:54px; z-index:5; pointer-events:auto; touch-action:none;
+    width:34px; height:34px; border-radius:8px; font-size:15px;
+    background:rgba(10,10,16,.55); border:1px solid rgba(255,255,255,.15); color:#eee;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #rotateHint{
+    display:none; position:absolute; top:8px; left:8px; right:8px; z-index:8;
+    pointer-events:none; background:rgba(8,8,14,.85); color:#e6e9f2; text-align:center;
+    border-radius:8px; padding:8px 12px; font-size:12px; line-height:1.4;
+  }
+  @media (hover: hover) and (pointer: fine){
+    #touchRibbon, #btnPause{ display:none; }
+  }
+  @media (hover: none), (pointer: coarse){
+    #hint{ display:none; }
+    #touchRibbon{ display:flex; }
+    body{ padding:8px; }
+  }
+  @media (hover: none) and (max-width: 820px) and (orientation: portrait),
+         (pointer: coarse) and (max-width: 820px) and (orientation: portrait){
+    #rotateHint{ display:block; }
+  }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="960" height="540"></canvas>
+    <button id="muteBtn" title="Mute (M)">🔊</button>
+    <button id="btnPause" title="Pause (Esc)">⏸</button>
+    <div id="rotateHint">Tip: rotate your phone sideways for a bigger view</div>
+  </div>
+  <div id="touchRibbon">
+    <div class="tbtn-group">
+      <div class="tbtn" id="btnLeft">◀</div>
+      <div class="tbtn" id="btnRight">▶</div>
+    </div>
+    <div class="tbtn-group">
+      <div class="tbtn" id="btnJump">⤒</div>
+      <div class="tbtn" id="btnShoot">●</div>
+    </div>
+  </div>
+  <div id="hint">
+    <b>Move</b> Arrow Keys / A,D &nbsp; · &nbsp; <b>Jump</b> Up / W / Space &nbsp; · &nbsp;
+    <b>Shoot</b> X / J &nbsp; · &nbsp; <b>Pause</b> Esc &nbsp; · &nbsp; <b>Mute</b> M
+  </div>
+
+<script>
+"use strict";
+/* =========================================================================
+   SNEAKY RAGNHEIÐUR
+   A two-hero rescue platformer. Built as a single, dependency-free page.
+   ========================================================================= */
+
+// ---------- Canvas setup ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+// W/H are the LOGICAL coordinate space every drawing call in this file uses —
+// unchanged regardless of how large the canvas actually renders on screen.
+// fitCanvasToDisplay() below matches the canvas's real pixel buffer to its
+// displayed CSS size (× devicePixelRatio) so the game stays crisp at any
+// window size instead of being stretched from a fixed small buffer.
+const W = 960, H = 540;
+function fitCanvasToDisplay(){
+  const rect = canvas.getBoundingClientRect();
+  if(rect.width < 1 || rect.height < 1) return; // not laid out yet
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const targetW = Math.round(rect.width * dpr);
+  const targetH = Math.round(rect.height * dpr);
+  if(canvas.width !== targetW || canvas.height !== targetH){
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+  const scale = targetW / W;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+}
+fitCanvasToDisplay();
+window.addEventListener('resize', fitCanvasToDisplay);
+requestAnimationFrame(fitCanvasToDisplay); // safety re-check once layout has fully settled
+
+// ---------- Utility ----------
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function rectOf(o){ return { x:o.x, y:o.y, w:o.w, h:o.h }; }
+function overlap(a, b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function seededRand(seed){
+  const x = Math.sin(seed * 999.7 + 13.1) * 10000;
+  return x - Math.floor(x);
+}
+function lerp(a,b,t){ return a + (b-a)*t; }
+function easeOutQuad(t){ return t*(2-t); }
+function easeInQuad(t){ return t*t; }
+
+// ---------- Assets ----------
+const IMG = {
+  ragnheidur: (() => { const i = new Image(); i.src = 'ragnheidur_portrait.png'; return i; })(),
+  stuart:     (() => { const i = new Image(); i.src = 'stuart_portrait.png'; return i; })(),
+};
+// Newer full-body art used specifically on the character-select screen.
+const IMG_SELECT = {
+  ragnheidur: (() => { const i = new Image(); i.src = 'ragnheidur_select.png'; return i; })(),
+  stuart:     (() => { const i = new Image(); i.src = 'stuart_select.png'; return i; })(),
+};
+// Separate sprite art used for in-game rendering (running pose, drawn facing
+// right by default) — distinct from the portrait art above, which stays on
+// the story/win screens.
+const SPRITE = {
+  ragnheidur: (() => { const i = new Image(); i.src = 'ragnheidur_sprite.png'; return i; })(),
+  stuart:     (() => { const i = new Image(); i.src = 'stuart_sprite.png'; return i; })(),
+};
+
+// ---------- Audio (tiny synth, no files needed) ----------
+let actx = null;
+let muted = false;
+function ensureAudio(){
+  if(actx) return;
+  try{ actx = new (window.AudioContext || window.webkitAudioContext)(); }
+  catch(e){ actx = null; }
+}
+function beep(freq, dur, type, vol, slideTo){
+  if(muted || !actx) return;
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  o.type = type || 'square';
+  const t0 = actx.currentTime;
+  o.frequency.setValueAtTime(freq, t0);
+  if(slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(slideTo,1), t0 + dur);
+  g.gain.setValueAtTime(vol != null ? vol : 0.07, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g); g.connect(actx.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+// Like beep(), but scheduled at an explicit future AudioContext time instead
+// of "now" — used by the music sequencer so notes line up precisely without
+// drifting, and given a short attack ramp so notes don't click.
+function tone(freq, startTime, dur, type, vol){
+  if(muted || !actx) return;
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, startTime);
+  g.gain.setValueAtTime(0.0001, startTime);
+  g.gain.exponentialRampToValueAtTime(vol, startTime + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, startTime + dur);
+  o.connect(g); g.connect(actx.destination);
+  o.start(startTime); o.stop(startTime + dur + 0.03);
+}
+const sfx = {
+  jump:      () => beep(520, 0.12, 'square', 0.06, 760),
+  shoot:     () => beep(880, 0.06, 'square', 0.045, 300),
+  enemyShoot:() => beep(300, 0.07, 'sawtooth', 0.035, 180),
+  hitEnemy:  () => beep(180, 0.12, 'sawtooth', 0.07, 60),
+  stomp:     () => beep(300, 0.10, 'square', 0.07, 120),
+  hurt:      () => beep(140, 0.22, 'sawtooth', 0.09, 40),
+  gem:       () => beep(1000, 0.08, 'sine', 0.05, 1400),
+  heart:     () => beep(700, 0.16, 'sine', 0.06, 1000),
+  oneUp:     () => { beep(660,0.1,'square',0.06,900); setTimeout(()=>beep(990,0.15,'square',0.06,1300),90); },
+  checkpoint:() => beep(500, 0.25, 'triangle', 0.07, 900),
+  select:    () => beep(440, 0.06, 'square', 0.05, 620),
+  confirm:   () => beep(660, 0.1, 'square', 0.06, 880),
+  win:       () => { beep(660,0.15,'square',0.07,880); setTimeout(()=>beep(880,0.2,'square',0.07,1100),120); setTimeout(()=>beep(1100,0.28,'square',0.07,1400),260); },
+  lose:      () => beep(220, 0.45, 'sawtooth', 0.08, 70),
+  bossHit:   () => beep(220, 0.09, 'square', 0.06, 140),
+  bossDefeat:() => { beep(880,0.12,'square',0.08,1200); setTimeout(()=>beep(660,0.12,'square',0.08,880),100); setTimeout(()=>beep(1320,0.35,'square',0.09,1760),200); },
+  villainAppear: () => beep(160, 0.5, 'sawtooth', 0.06, 60),
+  struggle:      () => beep(320, 0.08, 'square', 0.06, 200),
+  dragOff:       () => beep(500, 0.4, 'sawtooth', 0.06, 90),
+  reunite:       () => { beep(520,0.14,'sine',0.07,780); setTimeout(()=>beep(780,0.18,'sine',0.07,1040),110); setTimeout(()=>beep(1040,0.3,'sine',0.08,1300),240); },
+  heartShower:   () => { beep(660,0.1,'sine',0.06,880); setTimeout(()=>beep(880,0.1,'sine',0.06,1100),80); setTimeout(()=>beep(1100,0.1,'sine',0.06,1320),160); setTimeout(()=>beep(1320,0.22,'sine',0.07,1600),240); },
+};
+
+// ---------- Background music (simple looping chiptune, no audio files) ----------
+// A short pentatonic melody + a two-note bass drone, scheduled just ahead of
+// playback time (the standard Web Audio lookahead pattern) so it loops
+// smoothly without drifting or stuttering.
+const NOTE_C4 = 261.63;
+function noteFreq(semitones){ return NOTE_C4 * Math.pow(2, semitones / 12); }
+const MUSIC_BPM = 108;
+const EIGHTH = 60 / MUSIC_BPM / 2;
+const QUARTER = 60 / MUSIC_BPM;
+// C major pentatonic riff (semitones from C4), two bars, 16 eighth notes:
+const MELODY = [0,4,7,4, 9,7,4,2, 0,4,7,9, 12,9,7,4];
+// Simple root/fifth drone underneath, one note per quarter (8 per loop):
+const BASS = [-12,-5,-12,-5, -12,-5,-8,-5];
+const music = { noteIdx:0, nextTime:0, bassIdx:0, bassNextTime:0, inited:false };
+function scheduleMusic(){
+  if(muted || !actx) return;
+  const now = actx.currentTime;
+  if(!music.inited || music.nextTime < now){ music.nextTime = now + 0.05; music.inited = true; }
+  if(music.bassNextTime < now) music.bassNextTime = now + 0.05;
+  while(music.nextTime < now + 0.12){
+    tone(noteFreq(MELODY[music.noteIdx % MELODY.length]), music.nextTime, EIGHTH * 0.85, 'triangle', 0.045);
+    music.noteIdx++;
+    music.nextTime += EIGHTH;
+  }
+  while(music.bassNextTime < now + 0.12){
+    tone(noteFreq(BASS[music.bassIdx % BASS.length]), music.bassNextTime, QUARTER * 0.9, 'sine', 0.05);
+    music.bassIdx++;
+    music.bassNextTime += QUARTER;
+  }
+}
+
+// ---------- Input ----------
+const keys = {};
+const KEYS_CAPTURED = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD','KeyX','KeyJ','Enter','Escape','KeyM'];
+// Named so touch controls can call the exact same code path as a real
+// keyboard event — one input pipeline, two ways to trigger it.
+function handleKeyDown(e){
+  ensureAudio();
+  if(KEYS_CAPTURED.includes(e.code)) e.preventDefault();
+  keys.__justPressed = keys.__justPressed || {};
+  if(!keys[e.code]) keys.__justPressed[e.code] = true;
+  keys[e.code] = true;
+  if(e.code === 'KeyM') toggleMute();
+  if(e.ctrlKey && e.shiftKey && e.code === 'KeyH'){
+    e.preventDefault();
+    spawnHeartShower();
+  }
+}
+function handleKeyUp(e){ keys[e.code] = false; }
+window.addEventListener('keydown', handleKeyDown);
+window.addEventListener('keyup', handleKeyUp);
+function justPressed(code){
+  if(keys.__justPressed && keys.__justPressed[code]){ keys.__justPressed[code] = false; return true; }
+  return false;
+}
+function clearJustPressed(){ keys.__justPressed = {}; }
+function tapCode(code){ handleKeyDown({ code, preventDefault(){} }); handleKeyUp({ code }); }
+
+const muteBtn = document.getElementById('muteBtn');
+function toggleMute(){ muted = !muted; muteBtn.textContent = muted ? '🔇' : '🔊'; }
+muteBtn.addEventListener('click', ()=>{ ensureAudio(); toggleMute(); });
+
+// ---------- Touch controls (mobile) ----------
+// These call the same handleKeyDown/handleKeyUp as the keyboard, so gameplay
+// logic never needs to know which input source is in use. The buttons are
+// hidden by CSS on precise-pointer (mouse) devices, so desktop is unaffected.
+function bindHoldButton(id, code){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const press = (e) => { e.preventDefault(); ensureAudio(); handleKeyDown({ code, preventDefault(){} }); };
+  const release = (e) => { if(e) e.preventDefault(); handleKeyUp({ code }); };
+  el.addEventListener('touchstart', press, { passive:false });
+  el.addEventListener('touchend', release, { passive:false });
+  el.addEventListener('touchcancel', release, { passive:false });
+  // Also respond to mouse events so it's testable on touch-emulated desktop browsers.
+  el.addEventListener('mousedown', press);
+  el.addEventListener('mouseup', release);
+  el.addEventListener('mouseleave', release);
+}
+function bindTapButton(id, code){
+  const el = document.getElementById(id);
+  if(!el) return;
+  const tap = (e) => { e.preventDefault(); ensureAudio(); tapCode(code); };
+  el.addEventListener('touchstart', tap, { passive:false });
+  el.addEventListener('click', tap);
+}
+bindHoldButton('btnLeft', 'ArrowLeft');
+bindHoldButton('btnRight', 'ArrowRight');
+bindHoldButton('btnJump', 'ArrowUp');
+bindHoldButton('btnShoot', 'KeyX');
+bindTapButton('btnPause', 'Escape');
+// Tapping the game view itself confirms menus (title, story, level-clear,
+// rescue, win, game-over) — the same role Enter plays on keyboard. It has no
+// effect during actual gameplay since those screens don't read Enter.
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); ensureAudio(); tapCode('Enter'); }, { passive:false });
+canvas.addEventListener('click', () => { ensureAudio(); tapCode('Enter'); });
+
+// Fade out the rotate-phone tip after a few seconds; purely cosmetic and
+// non-blocking (the element already has pointer-events:none).
+const rotateHint = document.getElementById('rotateHint');
+if(rotateHint){
+  setTimeout(() => { rotateHint.style.transition = 'opacity 1s'; rotateHint.style.opacity = '0'; }, 4000);
+}
+
+// ---------- Physics constants ----------
+const GRAVITY = 0.55;
+const JUMP_V = -13.2;
+const MOVE_SPEED = 4.25; // ~15% slower than before, per feedback that movement felt too fast
+const MAX_FALL = 15;
+const TILE = 70;
+const GROUND_Y = 470;      // top of ground platforms
+const GROUND_DEPTH = 70;   // reaches exactly to canvas bottom (540)
+
+// ---------- Character palettes ----------
+// Cutscene characters render bigger than their in-level sprite size (34x54)
+// for more visual presence on the kidnap/rescue screens.
+const CUTSCENE_CHAR_W = 64, CUTSCENE_CHAR_H = 102;
+
+const PALETTES = {
+  ragnheidur: {
+    skin:'#f0c39a', hair:'#e8b95c', cap:'#c62828', capBadge:'#fff',
+    shirt:'#c62828', overalls:'#2a56a8', overallsDk:'#1c3d7c',
+    boot:'#37474f', bootAccent:'#c0392b', gun:'#5b5f66', glove:'#f4f4f4'
+  },
+  stuart: {
+    skin:'#8a5a3c', hair:'#4a4a4a', cap:null, capBadge:null,
+    shirt:'#5a4632', overalls:'#5a4632', overallsDk:'#3e3226',
+    boot:'#2b2b2b', bootAccent:'#8a6d3b', gun:'#5b5f66', glove:'#3a2f22',
+    glasses:'#222'
+  }
+};
+
+// ---------- Theme visuals ----------
+// The Vault Keeper's fight-time taunts — a private joke, since he's
+// fiercely, mysteriously protective of his interstacles.
+const BOSS_TAUNTS = [
+  "You'll never reach my interstacles!",
+  "Not the interstacles! Anything but that!",
+  "Protect... the interstacles...",
+];
+
+const THEMES = {
+  fjord: {
+    sky1:'#bfe3ef', sky2:'#eaf6f2', far:'#9cc9d6', near:'#6fa8b8',
+    ground:'#e8f2f4', groundDk:'#b9d3d9', groundLine:'#dff0f2',
+    platform:'#dcecee', platformDk:'#a9c7cc',
+    accent:'#2f7d95', label:'The Frozen Fjord'
+  },
+  savanna: {
+    sky1:'#ffd98a', sky2:'#fff2d0', far:'#e0a95c', near:'#c98a3e',
+    ground:'#c99a4f', groundDk:'#a97a35', groundLine:'#e0b86e',
+    platform:'#b5843f', platformDk:'#8f6630',
+    accent:'#7a4a1e', label:'The Golden Savanna'
+  },
+  volcanic: {
+    sky1:'#2b1420', sky2:'#5c2233', far:'#3a1b28', near:'#241119',
+    ground:'#3a3a3f', groundDk:'#211f22', groundLine:'#57452f',
+    platform:'#4a4448', platformDk:'#2a262a',
+    accent:'#ff7a3c', label:'The Volcanic Highlands'
+  },
+  rainforest: {
+    sky1:'#bfe0a8', sky2:'#e8f5da', far:'#6fa15a', near:'#4b7d40',
+    ground:'#5a7a3d', groundDk:'#3d5729', groundLine:'#7ea153',
+    platform:'#6b8c47', platformDk:'#465e2c',
+    accent:'#2e5c2a', label:'The Emerald Rainforest'
+  },
+  dungeon: {
+    sky1:'#16141c', sky2:'#26202c', far:'#2a2432', near:'#1c1822',
+    ground:'#4a444e', groundDk:'#2b2731', groundLine:'#5c5560',
+    platform:'#544e58', platformDk:'#332f38',
+    accent:'#e0a23c', label:'The Sunken Vault'
+  }
+};
+
+// ---------- Level builder ----------
+// Ground pattern: string of 'G' (solid) and '.' (gap), each char = one TILE wide.
+function groundRectsFromPattern(pattern){
+  const rects = [];
+  let start = null;
+  for(let i = 0; i <= pattern.length; i++){
+    const c = pattern[i];
+    if(c === 'G'){
+      if(start === null) start = i;
+    } else if(start !== null){
+      rects.push({ x:start*TILE, y:GROUND_Y, w:(i-start)*TILE, h:GROUND_DEPTH, kind:'ground' });
+      start = null;
+    }
+  }
+  return rects;
+}
+function plat(x, y, w){ return { x, y, w, h:18, kind:'platform' }; }
+
+function buildLevel(def){
+  const groundRects = groundRectsFromPattern(def.pattern);
+  const width = def.pattern.length * TILE;
+  const platforms = (def.platforms || []).map(p => plat(p[0], p[1], p[2]));
+  const solids = groundRects.concat(platforms);
+
+  const enemies = (def.enemies || []).map(e => makeEnemy(e));
+  const pickups = (def.pickups || []).map(p => ({
+    x:p[1], y:p[2], w: p[0]==='gem'?18:(p[0]==='heart'?22:26), h: p[0]==='gem'?18:(p[0]==='heart'?20:26),
+    type:p[0], collected:false
+  }));
+
+  const level = {
+    name: def.name,
+    theme: def.theme,
+    quip: def.quip || '',
+    width, solids, groundRects, platforms,
+    enemies, pickups,
+    checkpoint: { x: def.start[0], y: def.start[1] },
+    start: { x: def.start[0], y: def.start[1] },
+    goalX: def.goalX,
+    isFinal: !!def.isFinal,
+    hasBoss: !!def.hasBoss,
+    bossDefeated: false,
+    barrier: def.barrier ? { x:def.barrier[0], y:def.barrier[1]-260, w:14, h:260, kind:'barrier' } : null,
+    decor: def.decor || [],
+    bgSeed: def.bgSeed || 1
+  };
+  return level;
+}
+
+function makeEnemy(e){
+  // e: [type, x, y, ...extra]
+  const base = { type:e[0], x:e[1], y:e[2], vx:0, vy:0, dead:false, hp:1, hurtT:0 };
+  if(e[0] === 'walker'){
+    return Object.assign(base, {
+      w:32, h:44, y:e[2]-44, patrolMin:e[3], patrolMax:e[4], vx: e[5] || -1.3,
+      stompable:true, hp:1, animT: Math.random()*10
+    });
+  }
+  if(e[0] === 'shooter'){
+    return Object.assign(base, {
+      w:30, h:34, y:e[2]-34, timer: e[3]||60, fireRate: e[3]||70,
+      stompable:false, hp:2
+    });
+  }
+  if(e[0] === 'flyer'){
+    return Object.assign(base, {
+      w:30, h:26, baseY:e[2], y:e[2], patrolMin:e[3], patrolMax:e[4], vx: e[5]||1.6,
+      t: Math.random()*6, stompable:false, hp:1
+    });
+  }
+  if(e[0] === 'boss'){
+    return Object.assign(base, {
+      w:64, h:60, baseX:e[1], baseY:e[2], y:e[2],
+      mode:'hover', timer:90, t:0, stompable:false, hp:8, maxHp:8,
+      tauntText:'', tauntTimer:0
+    });
+  }
+  return base;
+}
+
+// ---------- Level definitions ----------
+// Pickups: ['gem'|'heart'|'oneup'|'checkpoint', x, y]
+// Enemies: walker  ['walker', x, groundY, patrolMin, patrolMax, speed?]
+//          shooter ['shooter', x, groundY, fireRateFrames?]
+//          flyer   ['flyer', x, baseY, patrolMin, patrolMax, speed?]
+//          boss    ['boss', x, baseY]
+const LEVEL_DEFS = [
+  { // LEVEL 1 — Fjord (Iceland, easy intro)
+    name:'The Frozen Fjord', theme:'fjord', bgSeed:11, quip:'bring the jacket, dummy',
+    pattern:'GGGGGGGGGG.GGGGGGGGG.GGGGGGGGGGG..GGGGGGGGGGGGGGGG',
+    platforms:[ [700,380,140], [1800,390,120], [2285,410,80] ],
+    start:[80, GROUND_Y-54],
+    enemies:[
+      ['walker', 500, GROUND_Y, 450, 650],
+      ['walker', 1500, GROUND_Y, 1450, 1650],
+      ['walker', 2900, GROUND_Y, 2850, 3100],
+      ['shooter', 2000, GROUND_Y, 100],
+    ],
+    pickups:[
+      ['gem',300,430], ['gem',760,350], ['gem',1850,360], ['gem',3050,430],
+      ['heart',1300,430], ['checkpoint',1900,430], ['oneup',3350,430],
+    ],
+    goalX: 3420,
+  },
+  { // LEVEL 2 — Savanna (Uganda, easy-medium)
+    name:'The Golden Savanna', theme:'savanna', bgSeed:22, quip:'try to blend in. you won\u2019t.',
+    pattern:'GGGGGGGGGGGG..GGGGGGGGGG.GGGGGGGGGGGGGG..GGGGGGGGGGG',
+    platforms:[ [855,440,90], [2745,440,90], [1500,380,120] ],
+    start:[80, GROUND_Y-54],
+    enemies:[
+      ['walker', 400, GROUND_Y, 340, 560],
+      ['walker', 1100, GROUND_Y, 1050, 1300],
+      ['walker', 2000, GROUND_Y, 1950, 2200],
+      ['walker', 3100, GROUND_Y, 3040, 3300],
+      ['flyer', 1650, 310, 1600, 1950, 1.6],
+    ],
+    pickups:[
+      ['gem',200,430], ['gem',1200,430], ['gem',2600,430], ['gem',3450,430],
+      ['heart',2200,430], ['checkpoint',1850,430], ['oneup',3500,430],
+    ],
+    goalX: 3550,
+  },
+  { // LEVEL 3 — Volcanic Highlands (Iceland variation, harder)
+    name:'The Volcanic Highlands', theme:'volcanic', bgSeed:33, quip:'it\u2019s not you, it\u2019s 900 degrees',
+    pattern:'GGGGGGGG..GGGGGGGG..GGGGGG..GGGGGGGG..GGGGGG..GGGG',
+    platforms:[ [560,390,90], [1520,380,90], [2060,400,80], [3120,390,100] ],
+    start:[80, GROUND_Y-54],
+    enemies:[
+      ['walker', 300, GROUND_Y, 240, 460],
+      ['walker', 1400, GROUND_Y, 1340, 1560],
+      ['walker', 2600, GROUND_Y, 2540, 2800],
+      ['shooter', 900, GROUND_Y, 90],
+      ['shooter', 2150, GROUND_Y, 90],
+      ['flyer', 1850, 320, 1780, 2050, 1.8],
+    ],
+    pickups:[
+      ['gem',150,430], ['gem',600,360], ['gem',1600,430], ['gem',2950,430],
+      ['heart',2300,430], ['checkpoint',1750,430], ['oneup',3350,430],
+    ],
+    goalX: 3400,
+  },
+  { // LEVEL 4 — Rainforest (Uganda variation, harder)
+    name:'The Emerald Rainforest', theme:'rainforest', bgSeed:44, quip:'the bugs are bigger than your problems',
+    pattern:'GGGGGGGGGG..GGGGGGGGGG..GGGGGGGG..GGGGGGGGGG..GGGG',
+    platforms:[ [860,440,90], [1650,380,110], [1900,320,90], [2740,440,90], [2400,390,90] ],
+    start:[80, GROUND_Y-54],
+    enemies:[
+      ['walker', 400, GROUND_Y, 340, 600],
+      ['walker', 1200, GROUND_Y, 1140, 1400],
+      ['walker', 2200, GROUND_Y, 2140, 2400],
+      ['walker', 3000, GROUND_Y, 2940, 3200],
+      ['shooter', 1700, GROUND_Y, 90],
+      ['flyer', 900, 330, 800, 1050, 1.6],
+      ['flyer', 2550, 310, 2500, 2800, 1.8],
+    ],
+    pickups:[
+      ['gem',250,430], ['gem',1950,300], ['gem',2450,360], ['gem',3400,430],
+      ['heart',1500,430], ['checkpoint',1850,430], ['oneup',3350,430],
+    ],
+    goalX: 3400,
+  },
+  { // LEVEL 5 — The Sunken Vault (finale, boss + rescue)
+    name:'The Sunken Vault', theme:'dungeon', bgSeed:55, quip:'no jacket\u2019s saving you now',
+    pattern:'GGGGGG.GGGGGG.GGGGGG..GGGGGG.GGGGGGGGGGGGGGGGGGGGGGGGGGG',
+    platforms:[ [480,400,90], [1000,390,90], [1560,400,90] ],
+    start:[80, GROUND_Y-54],
+    hasBoss:true,
+    barrier:[2820, GROUND_Y],
+    enemies:[
+      ['walker', 350, GROUND_Y, 290, 520],
+      ['walker', 1300, GROUND_Y, 1240, 1480],
+      ['walker', 2350, GROUND_Y, 2290, 2560],
+      ['shooter', 750, GROUND_Y, 90],
+      ['shooter', 1850, GROUND_Y, 90],
+      ['flyer', 2000, 320, 1900, 2250, 1.7],
+      ['boss', 3220, GROUND_Y-160],
+    ],
+    pickups:[
+      ['gem',300,430], ['gem',1000,430], ['gem',1700,430], ['gem',2400,430],
+      ['heart',600,430], ['heart',1900,430],
+      ['checkpoint',1400,430], ['checkpoint',2750,430],
+      ['oneup',2650,430],
+    ],
+    goalX: 3820,
+    isFinal:true,
+  },
+];
+
+// ---------- Game state ----------
+let state = 'title';   // title, select, storyIntro, playing, paused, levelClear, rescue, win, gameOver
+let selectedChar = null;
+let currentLevelIndex = 0;
+let lives = 3, hearts = 3, maxHearts = 3, gems = 0;
+let player = null, level = null;
+let enemies = [], projectiles = [], pickups = [], particles = [];
+let camera = { x: 0 };
+let flashTimer = 0;
+let levelBannerT = 0;
+let stateTimer = 0;
+let selectCursor = 0; // 0 = ragnheidur, 1 = stuart
+let pauseCursor = 0; // 0 = resume, 1 = main menu
+let totalGemsCollected = 0;
+
+function resetRun(){
+  lives = 3; hearts = 3; maxHearts = 3; gems = 0; totalGemsCollected = 0;
+  currentLevelIndex = 0;
+}
+
+function loadLevel(index){
+  const def = LEVEL_DEFS[index];
+  level = buildLevel(def);
+  enemies = level.enemies;
+  pickups = level.pickups;
+  projectiles = [];
+  particles = [];
+  player = makePlayer(selectedChar, level.start.x, level.start.y);
+  hearts = maxHearts;
+  camera.x = 0;
+  levelBannerT = 320;
+  gems = 0;
+}
+
+function makePlayer(type, x, y){
+  return {
+    type, x, y, w:34, h:54, vx:0, vy:0, onGround:false, facing:1,
+    walkT:0, shootCooldown:0, shootAnim:0, invuln:0, dead:false
+  };
+}
+
+// ---------- Collision helpers ----------
+// Ground and platforms are "landing" surfaces only: any overlap resolves by
+// snapping the entity onto the top. They never block sideways movement. This
+// keeps missed jumps feeling right (you fall past the ledge into the gap)
+// instead of the classic bug where a low-angle approach to a ledge reads as
+// hitting a wall, freezing the entity in place while it sinks through.
+function resolveLanding(e, solids){
+  for(const s of solids){
+    if(!overlap(e, s)) continue;
+    e.y = s.y - e.h;
+    e.vy = 0;
+    e.onGround = true;
+  }
+}
+// True solid walls (only the boss barrier uses this) block horizontal motion.
+function resolveWalls(e, solids){
+  for(const s of solids){
+    if(!overlap(e, s)) continue;
+    if(e.vx > 0) e.x = s.x - e.w;
+    else if(e.vx < 0) e.x = s.x + s.w;
+    else {
+      const pushLeft = (e.x + e.w/2) < (s.x + s.w/2);
+      e.x = pushLeft ? s.x - e.w : s.x + s.w;
+    }
+    e.vx = 0;
+  }
+}
+function activeWalls(){
+  if(level.hasBoss && !level.bossDefeated && level.barrier) return [level.barrier];
+  return [];
+}
+
+
+// ---------- Particles ----------
+function spawnPoof(x, y){
+  for(let i=0;i<9;i++){
+    particles.push({ x, y, vx:(Math.random()-0.5)*4.5, vy:-Math.random()*4, life:26, maxLife:26, r:4+Math.random()*3, color:'#ffffff' });
+  }
+}
+function spawnSpark(x, y, color){
+  for(let i=0;i<5;i++){
+    particles.push({ x, y, vx:(Math.random()-0.5)*3.2, vy:(Math.random()-0.5)*3.2, life:16, maxLife:16, r:2+Math.random()*2, color: color||'#ffde59' });
+  }
+}
+// Warm confetti-style burst for reunion / celebration moments.
+const CELEBRATION_COLORS = ['#ffde59', '#ff8fa3', '#7fd8ff', '#9dffb0'];
+function spawnCelebration(x, y, count){
+  for(let i=0;i<(count||14);i++){
+    const color = CELEBRATION_COLORS[Math.floor(Math.random()*CELEBRATION_COLORS.length)];
+    particles.push({
+      x, y, vx:(Math.random()-0.5)*6, vy:-2-Math.random()*4,
+      life:50+Math.random()*20, maxLife:70, r:3+Math.random()*2.5, color
+    });
+  }
+}
+// A single piece of confetti drifting down from the top — for a continuous,
+// gentle celebration ambiance (used on the win screen), distinct from the
+// upward reunion burst above.
+function spawnConfettiDrop(x){
+  const color = CELEBRATION_COLORS[Math.floor(Math.random()*CELEBRATION_COLORS.length)];
+  particles.push({ x, y:-10, vx:(Math.random()-0.5)*1.5, vy:0.5+Math.random(), life:220, maxLife:220, r:3+Math.random()*2, color });
+}
+// Secret shower of hearts — Ctrl+Shift+H, works on any screen, any time.
+const HEART_SHOWER_COLORS = ['#ff6b81', '#ff8fa3', '#ffb3c1', '#ff4d6d'];
+function spawnHeartShower(){
+  for(let i=0;i<50;i++){
+    particles.push({
+      x: camera.x + Math.random()*W, y: -20 - Math.random()*260,
+      vx: (Math.random()-0.5)*1.4, vy: 1 + Math.random()*1.6,
+      life: 220+Math.random()*100, maxLife: 320,
+      r: 8+Math.random()*8, color: HEART_SHOWER_COLORS[Math.floor(Math.random()*HEART_SHOWER_COLORS.length)],
+      shape: 'heart'
+    });
+  }
+  sfx.heartShower();
+}
+function updateParticles(){
+  for(const p of particles){ p.x += p.vx; p.y += p.vy; p.vy += 0.16; p.life--; }
+  particles = particles.filter(p => p.life > 0);
+}
+
+// ---------- Combat ----------
+function fireProjectile(from){
+  const dir = from.facing;
+  projectiles.push({ x: from.x + from.w/2 + dir*16, y: from.y + from.h*0.42, w:10, h:6, vx: dir*11, life:70, friendly:true });
+  sfx.shoot();
+}
+function fireEnemyProjectile(en){
+  const dir = (player.x + player.w/2) < (en.x + en.w/2) ? -1 : 1;
+  projectiles.push({ x: en.x + en.w/2 + dir*8, y: en.y + en.h*0.4, w:9, h:9, vx: dir*6, life:130, friendly:false });
+  sfx.enemyShoot();
+}
+let fallQuipTimer = 0;
+function damagePlayer(amount, isFallDeath){
+  if(player.invuln > 0 && !isFallDeath) return;
+  hearts -= amount;
+  player.invuln = 70;
+  flashTimer = 10;
+  sfx.hurt();
+  if(isFallDeath) fallQuipTimer = 260;
+  if(hearts <= 0) loseLife();
+}
+function loseLife(){
+  lives -= 1;
+  if(lives <= 0){
+    state = 'gameOver'; stateTimer = 0; sfx.lose();
+  } else {
+    hearts = maxHearts;
+    respawnAtCheckpoint();
+  }
+}
+function respawnAtCheckpoint(){
+  player.x = level.checkpoint.x;
+  player.y = level.checkpoint.y;
+  player.vx = 0; player.vy = 0; player.invuln = 90;
+  camera.x = clamp(player.x - W/2, 0, Math.max(0, level.width - W));
+}
+
+// ---------- Update: player ----------
+function updatePlayer(dt){
+  const p = player;
+  let moveDir = 0;
+  if(keys['ArrowLeft'] || keys['KeyA']) moveDir -= 1;
+  if(keys['ArrowRight'] || keys['KeyD']) moveDir += 1;
+  p.vx = moveDir * MOVE_SPEED;
+  if(moveDir !== 0) p.facing = moveDir;
+
+  if((keys['ArrowUp'] || keys['KeyW'] || keys['Space']) && p.onGround){
+    p.vy = JUMP_V;
+    p.onGround = false;
+    sfx.jump();
+  }
+
+  p.vy += GRAVITY;
+  if(p.vy > MAX_FALL) p.vy = MAX_FALL;
+
+  if(p.shootCooldown > 0) p.shootCooldown--;
+  if((keys['KeyX'] || keys['KeyJ']) && p.shootCooldown <= 0){
+    fireProjectile(p);
+    p.shootCooldown = 16;
+    p.shootAnim = 8;
+  }
+  if(p.shootAnim > 0) p.shootAnim--;
+
+  const solids = level.solids;
+  p.x += p.vx;
+  p.y += p.vy;
+  p.onGround = false;
+  resolveLanding(p, solids);
+  resolveWalls(p, activeWalls());
+
+  if(p.x < 0) p.x = 0;
+  if(p.x > level.width - p.w) p.x = level.width - p.w;
+
+  if(p.y > H + 120){
+    damagePlayer(1, true);
+  }
+
+  if(moveDir !== 0 && p.onGround) p.walkT += 0.22; else p.walkT *= 0.85;
+  if(p.invuln > 0) p.invuln--;
+}
+
+// ---------- Update: enemies ----------
+function updateEnemy(en, dt){
+  if(en.dead) return;
+  const solids = level.solids;
+  if(en.type === 'walker'){
+    en.x += en.vx;
+    if(en.x < en.patrolMin){ en.x = en.patrolMin; en.vx = Math.abs(en.vx); }
+    if(en.x > en.patrolMax - en.w){ en.x = en.patrolMax - en.w; en.vx = -Math.abs(en.vx); }
+    en.vy += GRAVITY;
+    if(en.vy > MAX_FALL) en.vy = MAX_FALL;
+    en.onGround = false;
+    en.y += en.vy;
+    resolveLanding(en, solids);
+    en.animT += 0.15;
+  } else if(en.type === 'shooter'){
+    en.timer--;
+    const dist = Math.abs((player.x+player.w/2) - (en.x+en.w/2));
+    if(en.timer <= 0 && dist < 520){
+      fireEnemyProjectile(en);
+      en.timer = en.fireRate;
+    }
+  } else if(en.type === 'flyer'){
+    en.t += 0.05;
+    en.y = en.baseY + Math.sin(en.t) * 34;
+    en.x += en.vx;
+    if(en.x < en.patrolMin) en.vx = Math.abs(en.vx);
+    if(en.x > en.patrolMax) en.vx = -Math.abs(en.vx);
+  } else if(en.type === 'boss'){
+    updateBoss(en, dt);
+  }
+  if(en.hurtT > 0) en.hurtT--;
+}
+
+function updateBoss(en, dt){
+  en.timer--;
+  if(en.tauntTimer > 0) en.tauntTimer--;
+  if(en.mode === 'hover'){
+    en.t += 0.028;
+    en.x = en.baseX + Math.sin(en.t) * 160;
+    en.y = en.baseY + Math.sin(en.t * 1.6) * 18;
+    if(en.timer <= 0){
+      const roll = Math.random();
+      if(roll < 0.5){ en.mode = 'dive'; en.timer = 46; en.diveFromY = en.y; }
+      else { en.mode = 'burst'; en.timer = 26; }
+    }
+  } else if(en.mode === 'dive'){
+    en.y += 6.2;
+    if(en.timer <= 0 || en.y > en.baseY + 130){
+      en.mode = 'hover'; en.timer = 100;
+    }
+  } else if(en.mode === 'burst'){
+    if(en.timer === 26 || en.timer === 17 || en.timer === 8){ fireEnemyProjectile(en); }
+    if(en.timer <= 0){ en.mode = 'hover'; en.timer = 100; }
+  }
+}
+
+// ---------- Update: projectiles ----------
+function updateProjectiles(){
+  for(const pr of projectiles) pr.x += pr.vx;
+  for(const pr of projectiles) pr.life--;
+  projectiles = projectiles.filter(pr =>
+    pr.life > 0 && pr.x > camera.x - 60 && pr.x < camera.x + W + 60
+  );
+  for(const pr of projectiles){
+    if(pr.life <= 0) continue;
+    if(pr.friendly){
+      for(const en of enemies){
+        if(en.dead || en.life <= 0) continue;
+        if(overlap(pr, en)){
+          en.hp -= 1;
+          en.hurtT = 8;
+          pr.life = 0;
+          spawnSpark(pr.x, pr.y, '#ffde59');
+          if(en.hp <= 0){
+            en.dead = true;
+            spawnPoof(en.x + en.w/2, en.y + en.h/2);
+            en.type === 'boss' ? sfx.bossDefeat() : sfx.hitEnemy();
+          } else if(en.type === 'boss'){
+            sfx.bossHit();
+            if(en.tauntTimer <= 0 && Math.random() < 0.45){
+              en.tauntText = BOSS_TAUNTS[Math.floor(Math.random()*BOSS_TAUNTS.length)];
+              en.tauntTimer = 200;
+            }
+          }
+          break;
+        }
+      }
+    } else {
+      if(player.invuln <= 0 && overlap(pr, player)){
+        pr.life = 0;
+        damagePlayer(1, false);
+        player.vx = (player.x < pr.x ? -1 : 1) * 5;
+      }
+    }
+  }
+}
+
+// ---------- Update: player vs enemies (contact) ----------
+function checkPlayerEnemyContact(){
+  for(const en of enemies){
+    if(en.dead) continue;
+    if(!overlap(player, en)) continue;
+    const playerBottom = player.y + player.h;
+    const fallingOnTop = player.vy > 0 && (playerBottom - en.y) < 22 && en.stompable;
+    if(fallingOnTop){
+      en.dead = true;
+      spawnPoof(en.x + en.w/2, en.y + en.h/2);
+      player.vy = JUMP_V * 0.55;
+      sfx.stomp();
+    } else if(player.invuln <= 0){
+      damagePlayer(1, false);
+      player.vx = (player.x < en.x ? -1 : 1) * 6;
+      player.vy = -6.5;
+    }
+  }
+}
+
+// ---------- Update: pickups ----------
+function checkPickups(){
+  for(const pk of pickups){
+    if(pk.collected) continue;
+    if(!overlap(player, pk)) continue;
+    pk.collected = true;
+    if(pk.type === 'gem'){ gems++; totalGemsCollected++; sfx.gem(); spawnSpark(pk.x+9, pk.y+9, '#7fd8ff'); }
+    else if(pk.type === 'heart'){ if(hearts < maxHearts) hearts++; sfx.heart(); }
+    else if(pk.type === 'oneup'){ lives++; sfx.oneUp(); }
+    else if(pk.type === 'checkpoint'){ level.checkpoint = { x: pk.x - 8, y: GROUND_Y - player.h }; sfx.checkpoint(); }
+  }
+}
+
+// ---------- Rendering: background ----------
+let frameCount = 0;
+
+function tiledDecor(camX, factor, spacing, seedBase, drawFn){
+  const offset = camX * factor;
+  const start = Math.floor((offset - 150) / spacing) - 1;
+  const end = Math.floor((offset + W + 150) / spacing) + 1;
+  for(let i = start; i <= end; i++){
+    const seed = seedBase + i * 31;
+    const x = i * spacing + seededRand(seed) * 40 - offset;
+    drawFn(x, seed);
+  }
+}
+
+function renderBackground(theme, camX, seed){
+  const t = THEMES[theme];
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, t.sky1);
+  grad.addColorStop(1, t.sky2);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // far layer
+  ctx.fillStyle = t.far;
+  const farY = 360;
+  if(theme === 'fjord' || theme === 'volcanic'){
+    tiledDecor(camX, 0.15, 260, seed, (x, sd) => {
+      const h = 70 + seededRand(sd+2) * 60;
+      ctx.beginPath();
+      ctx.moveTo(x - 90, farY); ctx.lineTo(x, farY - h); ctx.lineTo(x + 90, farY);
+      ctx.closePath(); ctx.fill();
+    });
+  } else {
+    tiledDecor(camX, 0.15, 240, seed, (x, sd) => {
+      const r = 55 + seededRand(sd+2) * 40;
+      ctx.beginPath(); ctx.ellipse(x, farY, r, r*0.55, 0, Math.PI, 2*Math.PI); ctx.fill();
+    });
+  }
+
+  // near layer
+  ctx.fillStyle = t.near;
+  const nearY = 420;
+  tiledDecor(camX, 0.35, 200, seed + 500, (x, sd) => {
+    const r = 45 + seededRand(sd+2) * 35;
+    ctx.beginPath(); ctx.ellipse(x, nearY, r, r*0.5, 0, Math.PI, 2*Math.PI); ctx.fill();
+  });
+
+  // theme-specific accents
+  if(theme === 'fjord'){
+    tiledDecor(camX, 0.5, 420, seed + 900, (x, sd) => {
+      const puff = 8 + Math.sin(frameCount * 0.05 + sd) * 3;
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      for(let k=0;k<3;k++){
+        ctx.beginPath();
+        ctx.arc(x, nearY - 20 - k*14, puff - k*2, 0, Math.PI*2);
+        ctx.fill();
+      }
+    });
+  } else if(theme === 'savanna'){
+    tiledDecor(camX, 0.5, 260, seed + 900, (x, sd) => {
+      const th = 40 + seededRand(sd+3) * 20;
+      ctx.strokeStyle = '#5a3a1c'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(x, nearY+10); ctx.lineTo(x, nearY+10-th); ctx.stroke();
+      ctx.fillStyle = '#3f6b2a';
+      ctx.beginPath(); ctx.ellipse(x, nearY+10-th, 34, 14, 0, 0, Math.PI*2); ctx.fill();
+    });
+  } else if(theme === 'volcanic'){
+    tiledDecor(camX, 0.6, 300, seed + 900, (x, sd) => {
+      const glow = 0.35 + Math.sin(frameCount*0.08 + sd) * 0.15;
+      ctx.fillStyle = `rgba(255,122,60,${Math.max(glow,0.1)})`;
+      ctx.beginPath(); ctx.ellipse(x, GROUND_Y - 2, 60, 8, 0, 0, Math.PI*2); ctx.fill();
+    });
+  } else if(theme === 'rainforest'){
+    tiledDecor(camX, 0.5, 220, seed + 900, (x, sd) => {
+      const th = 55 + seededRand(sd+3) * 25;
+      ctx.strokeStyle = '#3f2c18'; ctx.lineWidth = 7;
+      ctx.beginPath(); ctx.moveTo(x, nearY+30); ctx.lineTo(x, nearY+30-th); ctx.stroke();
+      ctx.fillStyle = '#2c4f22';
+      for(let k=0;k<3;k++){
+        ctx.beginPath(); ctx.ellipse(x - 10 + k*10, nearY+30-th-k*8, 28, 16, 0, 0, Math.PI*2); ctx.fill();
+      }
+    });
+    tiledDecor(camX, 0.7, 500, seed + 1500, (x, sd) => {
+      ctx.fillStyle = 'rgba(200,230,255,0.35)';
+      ctx.fillRect(x, 0, 6, H);
+    });
+  } else if(theme === 'dungeon'){
+    tiledDecor(camX, 0.55, 260, seed + 900, (x, sd) => {
+      const flick = 0.7 + Math.sin(frameCount*0.2 + sd) * 0.3;
+      ctx.fillStyle = '#3a3440'; ctx.fillRect(x-4, nearY-70, 8, 110);
+      ctx.fillStyle = `rgba(255,170,60,${flick})`;
+      ctx.beginPath(); ctx.ellipse(x, nearY-80, 7, 11, 0, 0, Math.PI*2); ctx.fill();
+    });
+  }
+}
+
+// ---------- Rendering: solids ----------
+// Theme-appropriate surface detail drawn on top of each ground piece —
+// purely decorative, seeded by world position so it's stable across frames
+// (no flicker) rather than re-randomized every draw.
+function drawGroundTexture(theme, sx, s){
+  const seedBase = Math.floor(s.x / 10);
+  if(theme === 'fjord'){
+    for(let x=10; x<s.w-10; x+=34){
+      const seed = seedBase + x;
+      if(seededRand(seed) <= 0.45) continue;
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      const px = sx+x, py = s.y + 9 + seededRand(seed+1)*7;
+      ctx.beginPath();
+      ctx.moveTo(px, py-4); ctx.lineTo(px+3, py); ctx.lineTo(px, py+4); ctx.lineTo(px-3, py);
+      ctx.closePath(); ctx.fill();
+    }
+  } else if(theme === 'savanna'){
+    ctx.strokeStyle = 'rgba(90,58,28,0.5)'; ctx.lineWidth = 2;
+    for(let x=8; x<s.w-8; x+=24){
+      const seed = seedBase + x;
+      const px = sx+x, py = s.y+6;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px - 3 + seededRand(seed)*6, py - 7 - seededRand(seed+1)*5);
+      ctx.stroke();
+    }
+  } else if(theme === 'volcanic'){
+    for(let x=14; x<s.w-14; x+=44){
+      const seed = seedBase + x;
+      const glow = 0.28 + Math.sin(frameCount*0.06 + seed) * 0.14;
+      ctx.strokeStyle = `rgba(255,122,60,${Math.max(glow,0.12)})`; ctx.lineWidth = 2;
+      const px = sx+x, py = s.y + 13 + seededRand(seed)*18;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + 14 + seededRand(seed+1)*10, py + 5);
+      ctx.stroke();
+    }
+  } else if(theme === 'rainforest'){
+    for(let x=10; x<s.w-10; x+=28){
+      const seed = seedBase + x;
+      if(seededRand(seed) <= 0.4) continue;
+      ctx.fillStyle = 'rgba(40,70,25,0.5)';
+      ctx.beginPath(); ctx.ellipse(sx+x, s.y+11, 8, 4, 0, 0, Math.PI*2); ctx.fill();
+    }
+  } else if(theme === 'dungeon'){
+    ctx.strokeStyle = 'rgba(0,0,0,0.28)'; ctx.lineWidth = 1.5;
+    for(let x=0; x<s.w; x+=36){
+      ctx.beginPath(); ctx.moveTo(sx+x, s.y+6); ctx.lineTo(sx+x, s.y+s.h); ctx.stroke();
+    }
+  }
+}
+
+function renderSolids(){
+  const t = THEMES[level.theme];
+  const gr = level.groundRects;
+
+  // Pits: fill every gap between ground pieces with a dark, high-contrast
+  // chasm so the danger zone is unmistakable — this matters most in pale
+  // themes like the fjord, where a plain background gap barely differs
+  // from the ice-white ground around it.
+  for(let i=0;i<gr.length-1;i++){
+    const cur = gr[i], next = gr[i+1];
+    const gapX = cur.x + cur.w, gapW = next.x - gapX;
+    if(gapW <= 0) continue;
+    const sx = gapX - camera.x;
+    if(sx + gapW < -20 || sx > W + 20) continue;
+    const grad = ctx.createLinearGradient(0, cur.y, 0, cur.y + 100);
+    grad.addColorStop(0, 'rgba(6,7,14,0.96)');
+    grad.addColorStop(1, 'rgba(2,2,6,0.99)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(sx, cur.y, gapW, H - cur.y);
+    ctx.fillStyle = 'rgba(255,214,140,0.4)';
+    ctx.fillRect(sx, cur.y, gapW, 3);
+  }
+
+  for(let i=0;i<gr.length;i++){
+    const s = gr[i];
+    const sx = s.x - camera.x;
+    if(sx + s.w < -20 || sx > W + 20) continue;
+    ctx.fillStyle = t.ground;
+    ctx.fillRect(sx, s.y, s.w, s.h);
+    ctx.fillStyle = t.groundLine;
+    ctx.fillRect(sx, s.y, s.w, 6);
+    ctx.fillStyle = t.groundDk;
+    ctx.fillRect(sx, s.y + s.h - 4, s.w, 4);
+    drawGroundTexture(level.theme, sx, s);
+    // Bright edge accent marking exactly where a ledge drops into a pit.
+    ctx.fillStyle = 'rgba(255,220,150,0.95)';
+    if(i > 0) ctx.fillRect(sx, s.y, 3, s.h);
+    if(i < gr.length-1) ctx.fillRect(sx + s.w - 3, s.y, 3, s.h);
+  }
+  for(const s of level.platforms){
+    const sx = s.x - camera.x;
+    if(sx + s.w < -20 || sx > W + 20) continue;
+    ctx.fillStyle = t.platform;
+    ctx.fillRect(sx, s.y, s.w, s.h);
+    ctx.fillStyle = t.platformDk;
+    ctx.fillRect(sx, s.y + s.h - 4, s.w, 4);
+  }
+  if(level.hasBoss && !level.bossDefeated && level.barrier){
+    const b = level.barrier;
+    const sx = b.x - camera.x;
+    const pulse = 0.5 + Math.sin(frameCount * 0.1) * 0.2;
+    ctx.fillStyle = `rgba(224,162,60,${pulse})`;
+    ctx.fillRect(sx, b.y, b.w, b.h);
+    ctx.strokeStyle = 'rgba(255,220,150,0.8)';
+    ctx.strokeRect(sx, b.y, b.w, b.h);
+  }
+}
+
+// ---------- Rendering: character ----------
+// Fraction of each sprite's height where the legs begin — used to split the
+// image into a static torso and an animatable leg region (see below).
+const SPRITE_LEG_SPLIT = { ragnheidur: 0.60, stuart: 0.56 };
+
+function drawCharacter(x, y, w, h, facing, walkT, onGround, type, shootAnim, hurt, invulnBlink){
+  if(invulnBlink && frameCount % 6 < 3) return; // blink while invulnerable
+  const sx = x - camera.x;
+
+  if(onGround){
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(sx + w*0.5, y + h + 2, w*0.42, 5, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  const img = SPRITE[type];
+  if(!img || !img.complete || img.naturalWidth === 0){
+    drawCharacterProcedural(sx, y, w, h, facing, walkT, onGround, type, shootAnim, hurt);
+    return;
+  }
+
+  // The sprite art is drawn larger than the tight gameplay hitbox (w x h)
+  // for readability — a common platformer convention — anchored at the
+  // feet so collision stays exactly where the hitbox says regardless of
+  // the art's own proportions. A slight bob simulates a run cycle since
+  // this is a single running-pose image, not a multi-frame sheet.
+  const drawH = h * 1.55;
+  const drawW = drawH * (img.naturalWidth / img.naturalHeight);
+  const bob = onGround ? Math.abs(Math.sin(walkT)) * 3 : 0;
+  const footX = sx + w/2, footY = y + h;
+
+  ctx.save();
+  ctx.translate(footX, footY - bob);
+  if(facing < 0) ctx.scale(-1, 1);
+
+  // Cheap 2-frame "stride" from one static pose: the torso/arms/gun draw
+  // normally, but the leg region alternately mirrors left-right in place,
+  // which — since the pose already has one leg forward and one back —
+  // reads as alternating strides instead of a static running pose.
+  const split = SPRITE_LEG_SPLIT[type] || 0.58;
+  const splitPx = img.naturalHeight * split;
+  const torsoH = drawH * split;
+  const legH = drawH - torsoH;
+  const strideFlip = onGround && Math.sin(walkT) < 0;
+
+  ctx.drawImage(img, 0, 0, img.naturalWidth, splitPx, -drawW/2, -drawH, drawW, torsoH);
+  ctx.save();
+  if(strideFlip) ctx.scale(-1, 1);
+  ctx.drawImage(img, 0, splitPx, img.naturalWidth, img.naturalHeight - splitPx, -drawW/2, -legH, drawW, legH);
+  ctx.restore();
+
+  if(hurt){
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = 'rgba(255,60,60,0.45)';
+    ctx.fillRect(-drawW/2, -drawH, drawW, drawH);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.restore();
+
+  if(shootAnim > 0){
+    ctx.fillStyle = 'rgba(255,230,140,0.9)';
+    const mx = footX + facing * drawW * 0.46;
+    const my = footY - drawH * 0.52;
+    ctx.beginPath(); ctx.arc(mx, my, 6, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+// Fallback renderer used only if a sprite image hasn't finished loading yet
+// (e.g. the very first frame or two after opening the page).
+function drawCharacterProcedural(sx, y, w, h, facing, walkT, onGround, type, shootAnim, hurt){
+  const pal = PALETTES[type];
+  ctx.save();
+
+  const legLift = onGround ? Math.sin(walkT) * 9 : 0;
+  const legSpread = onGround ? 0 : 4;
+
+  // legs
+  ctx.fillStyle = pal.overallsDk;
+  ctx.fillRect(sx + w*0.18, y + h*0.62 - Math.max(legLift,0), w*0.28, h*0.38 + Math.min(legLift,0)*-1);
+  ctx.fillRect(sx + w*0.54, y + h*0.62 + Math.max(-legLift,0) - legSpread, w*0.28, h*0.38 - Math.max(-legLift,0)+legSpread);
+  // boots
+  ctx.fillStyle = pal.boot;
+  ctx.fillRect(sx + w*0.16, y + h - 10, w*0.32, 10);
+  ctx.fillRect(sx + w*0.52, y + h - 10, w*0.32, 10);
+
+  // torso (overalls)
+  ctx.fillStyle = pal.overalls;
+  ctx.fillRect(sx + w*0.12, y + h*0.30, w*0.76, h*0.36);
+  // shirt / straps
+  ctx.fillStyle = pal.shirt;
+  ctx.fillRect(sx + w*0.10, y + h*0.20, w*0.80, h*0.16);
+
+  // arm holding gun
+  ctx.fillStyle = pal.shirt;
+  const armY = y + h*0.34 + (shootAnim ? -2 : 0);
+  ctx.fillRect(sx + (facing>0? w*0.62 : w*0.02), armY, w*0.36, h*0.12);
+
+  // gun
+  ctx.fillStyle = pal.gun;
+  const gunX = facing > 0 ? sx + w*0.92 : sx - w*0.30;
+  ctx.fillRect(gunX, armY - 2, w*0.42, h*0.09);
+  if(shootAnim > 0){
+    ctx.fillStyle = 'rgba(255,230,140,0.9)';
+    const mx = facing > 0 ? gunX + w*0.42 : gunX;
+    ctx.beginPath(); ctx.arc(mx, armY + 2, 6, 0, Math.PI*2); ctx.fill();
+  }
+
+  // head
+  ctx.fillStyle = hurt ? '#ff8888' : pal.skin;
+  ctx.beginPath();
+  ctx.arc(sx + w*0.5, y + h*0.14, w*0.30, 0, Math.PI*2);
+  ctx.fill();
+
+  // hair
+  ctx.fillStyle = pal.hair;
+  if(type === 'ragnheidur'){
+    ctx.beginPath();
+    ctx.ellipse(sx + w*0.32, y + h*0.16, w*0.14, h*0.10, -0.3, 0, Math.PI*2);
+    ctx.fill();
+    // cap
+    ctx.fillStyle = pal.cap;
+    ctx.beginPath();
+    ctx.arc(sx + w*0.5, y + h*0.10, w*0.32, Math.PI, 2*Math.PI);
+    ctx.fill();
+    ctx.fillRect(sx + w*0.5 - (facing>0?0:w*0.34), y + h*0.06, facing>0? w*0.34 : w*0.34, h*0.06);
+    ctx.fillStyle = pal.capBadge;
+    ctx.beginPath(); ctx.arc(sx + w*0.5, y + h*0.06, 3.5, 0, Math.PI*2); ctx.fill();
+  } else {
+    // beard
+    ctx.fillStyle = '#6a6a6a';
+    ctx.fillRect(sx + w*0.28, y + h*0.16, w*0.44, h*0.12);
+    // glasses
+    ctx.strokeStyle = pal.glasses; ctx.lineWidth = 1.6;
+    ctx.strokeRect(sx + w*0.24, y + h*0.10, w*0.20, h*0.08);
+    ctx.strokeRect(sx + w*0.52, y + h*0.10, w*0.20, h*0.08);
+    ctx.beginPath(); ctx.moveTo(sx+w*0.44,y+h*0.13); ctx.lineTo(sx+w*0.52,y+h*0.13); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ---------- Rendering: enemies ----------
+function drawEnemy(en){
+  if(en.dead) return;
+  const sx = en.x - camera.x;
+  if(sx + en.w < -30 || sx > W + 30) return;
+  const flash = en.hurtT > 0;
+  if(en.type === 'walker'){
+    ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 0);
+    const bob = Math.sin(en.animT) * 2;
+    ctx.beginPath();
+    ctx.ellipse(sx + en.w/2, en.y + en.h/2 + bob, en.w/2, en.h/2, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#241d16';
+    ctx.beginPath(); ctx.arc(sx + en.w*0.32, en.y + en.h*0.42 + bob, 3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + en.w*0.68, en.y + en.h*0.42 + bob, 3, 0, Math.PI*2); ctx.fill();
+  } else if(en.type === 'shooter'){
+    ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 1);
+    ctx.fillRect(sx, en.y + en.h*0.3, en.w, en.h*0.7);
+    ctx.beginPath(); ctx.arc(sx + en.w/2, en.y + en.h*0.28, en.w*0.4, Math.PI, 2*Math.PI); ctx.fill();
+    ctx.fillStyle = '#ffb347';
+    ctx.beginPath(); ctx.arc(sx + en.w/2, en.y + en.h*0.3, 4, 0, Math.PI*2); ctx.fill();
+  } else if(en.type === 'flyer'){
+    ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 2);
+    ctx.beginPath();
+    ctx.ellipse(sx + en.w/2, en.y + en.h/2, en.w/2, en.h/2, 0, 0, Math.PI*2);
+    ctx.fill();
+    const wingFlap = Math.sin(frameCount*0.4) * 6;
+    ctx.strokeStyle = themeEnemyColor(level.theme, 2);
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sx, en.y+en.h/2); ctx.lineTo(sx - 10, en.y+en.h/2 - wingFlap); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx+en.w, en.y+en.h/2); ctx.lineTo(sx+en.w+10, en.y+en.h/2 - wingFlap); ctx.stroke();
+  } else if(en.type === 'boss'){
+    drawBoss(en, sx, flash);
+  }
+}
+function themeEnemyColor(theme, idx){
+  const sets = {
+    fjord:     ['#7a97a8', '#4f6f80', '#c9d8de'],
+    savanna:   ['#8a6a3c', '#5c4526', '#c99a4f'],
+    volcanic:  ['#5c3a2e', '#8a3a2a', '#ff7a3c'],
+    rainforest:['#3d5e2a', '#2a4a1e', '#6b8c47'],
+    dungeon:   ['#5a5460', '#3e3844', '#8a7f95'],
+  };
+  return sets[theme][idx];
+}
+function drawBoss(en, sx, flash){
+  const pulse = Math.sin(frameCount*0.15)*4;
+  ctx.fillStyle = flash ? '#ffffff' : '#3a2440';
+  ctx.beginPath();
+  ctx.ellipse(sx + en.w/2, en.y + en.h/2 + pulse*0.2, en.w/2 + pulse, en.h/2, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = '#e0a23c'; ctx.lineWidth = 3;
+  ctx.stroke();
+  // eyes
+  ctx.fillStyle = '#ffdb6b';
+  ctx.beginPath(); ctx.arc(sx + en.w*0.35, en.y + en.h*0.42, 6, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx + en.w*0.65, en.y + en.h*0.42, 6, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#2a1030';
+  ctx.beginPath(); ctx.arc(sx + en.w*0.35, en.y + en.h*0.42, 2.6, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx + en.w*0.65, en.y + en.h*0.42, 2.6, 0, Math.PI*2); ctx.fill();
+  // boss health bar
+  const barW = 220, barX = W/2 - barW/2, barY = 24;
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(barX, barY, barW, 12);
+  ctx.fillStyle = '#e0a23c';
+  ctx.fillRect(barX, barY, barW * clamp(en.hp/en.maxHp,0,1), 12);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.strokeRect(barX, barY, barW, 12);
+  ctx.fillStyle = '#eee'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('THE VAULT KEEPER', W/2, barY - 4);
+
+  if(en.tauntTimer > 0){
+    const a = clamp(en.tauntTimer / 20, 0, 1) * (en.tauntTimer > 180 ? clamp((200-en.tauntTimer)/20, 0, 1) : 1);
+    ctx.save();
+    ctx.globalAlpha = a;
+    const bubbleY = en.y - 22;
+    ctx.font = 'bold 11px "Nunito", sans-serif';
+    const textW = ctx.measureText(en.tauntText).width;
+    ctx.fillStyle = 'rgba(10,10,18,0.75)';
+    ctx.fillRect(sx + en.w/2 - textW/2 - 8, bubbleY - 14, textW + 16, 20);
+    ctx.fillStyle = '#ffdb6b';
+    ctx.textAlign = 'center';
+    ctx.fillText(en.tauntText, sx + en.w/2, bubbleY);
+    ctx.restore();
+  }
+}
+
+// A standalone version of the Vault Keeper's look, for cutscenes (the
+// in-level boss uses drawBoss() above; same palette, so the villain reads
+// as the same character in the kidnapping scene and the final boss fight).
+function drawVaultKeeperFigure(cx, cy, scale, alpha){
+  if(alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const pulse = Math.sin(frameCount*0.15) * 3 * scale;
+  ctx.strokeStyle = 'rgba(58,36,64,0.85)';
+  ctx.lineWidth = 9 * scale; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - 32*scale, cy + 6*scale);
+  ctx.quadraticCurveTo(cx - 66*scale, cy + 34*scale, cx - 78*scale, cy + 66*scale);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx + 32*scale, cy + 6*scale);
+  ctx.quadraticCurveTo(cx + 60*scale, cy + 30*scale, cx + 66*scale, cy + 64*scale);
+  ctx.stroke();
+  ctx.fillStyle = '#3a2440';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + pulse*0.2, 44*scale + pulse, 56*scale, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = '#e0a23c'; ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.fillStyle = '#ffdb6b';
+  ctx.beginPath(); ctx.arc(cx - 14*scale, cy - 4*scale, 6*scale, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 14*scale, cy - 4*scale, 6*scale, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#2a1030';
+  ctx.beginPath(); ctx.arc(cx - 14*scale, cy - 4*scale, 2.6*scale, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 14*scale, cy - 4*scale, 2.6*scale, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+// Simple prison-cage silhouette, used in the kidnap and rescue cutscenes.
+function drawCage(cx, cy, w, h, alpha, openAmount){
+  if(alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#8a94ad'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  const bars = 5;
+  const open = openAmount || 0;
+  for(let i = 0; i < bars; i++){
+    const bx = cx - w/2 + (w/(bars-1)) * i;
+    const swing = (i === 0 || i === bars-1) ? 0 : open * (i - (bars-1)/2) * 18;
+    ctx.beginPath();
+    ctx.moveTo(bx, cy - h/2);
+    ctx.lineTo(bx + swing, cy + h/2);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.moveTo(cx - w/2, cy - h/2); ctx.lineTo(cx + w/2, cy - h/2);
+  ctx.moveTo(cx - w/2, cy + h/2); ctx.lineTo(cx + w/2, cy + h/2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- Rendering: projectiles & particles & pickups ----------
+function drawProjectiles(){
+  for(const pr of projectiles){
+    const sx = pr.x - camera.x;
+    ctx.fillStyle = pr.friendly ? '#ffe081' : '#ff5f6b';
+    ctx.beginPath();
+    ctx.ellipse(sx, pr.y, pr.w/2, pr.h/2, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+function drawParticles(){
+  for(const p of particles){
+    ctx.globalAlpha = Math.max(p.life / p.maxLife, 0);
+    if(p.shape === 'heart'){
+      drawHeartShape(p.x - camera.x, p.y, p.r, p.color);
+    } else {
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x - camera.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function drawPickups(){
+  for(const pk of pickups){
+    if(pk.collected) continue;
+    const sx = pk.x - camera.x;
+    if(sx < -30 || sx > W + 30) continue;
+    const bob = Math.sin(frameCount*0.08 + pk.x) * 3;
+    if(pk.type === 'gem'){
+      ctx.fillStyle = '#3fa9e0';
+      ctx.beginPath();
+      ctx.moveTo(sx+9, pk.y+bob); ctx.lineTo(sx+18, pk.y+9+bob); ctx.lineTo(sx+9, pk.y+18+bob); ctx.lineTo(sx, pk.y+9+bob);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#dff4ff'; ctx.lineWidth=1.5; ctx.stroke();
+    } else if(pk.type === 'heart'){
+      drawHeartShape(sx+11, pk.y+11+bob, 10, '#e0435c');
+    } else if(pk.type === 'oneup'){
+      ctx.fillStyle = '#3fbf5f';
+      ctx.beginPath(); ctx.arc(sx+13, pk.y+13+bob, 13, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('1UP', sx+13, pk.y+16+bob);
+    } else if(pk.type === 'checkpoint'){
+      ctx.strokeStyle = '#c9c9c9'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(sx+2, pk.y+26); ctx.lineTo(sx+2, pk.y-14); ctx.stroke();
+      ctx.fillStyle = level.checkpoint.x === pk.x - 8 ? '#3fbf5f' : '#e0a23c';
+      ctx.beginPath(); ctx.moveTo(sx+2, pk.y-14); ctx.lineTo(sx+22, pk.y-8); ctx.lineTo(sx+2, pk.y-2); ctx.closePath(); ctx.fill();
+    }
+  }
+}
+function drawHeartShape(cx, cy, size, color){
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  const s = size/10;
+  ctx.moveTo(cx, cy + 6*s);
+  ctx.bezierCurveTo(cx - 10*s, cy - 4*s, cx - 4*s, cy - 10*s, cx, cy - 3*s);
+  ctx.bezierCurveTo(cx + 4*s, cy - 10*s, cx + 10*s, cy - 4*s, cx, cy + 6*s);
+  ctx.closePath();
+  ctx.fill();
+}
+
+// ---------- Goal / boss defeat ----------
+function checkLevelProgress(){
+  if(level.hasBoss && !level.bossDefeated){
+    const boss = enemies.find(e => e.type === 'boss');
+    if(boss && boss.dead) level.bossDefeated = true;
+  }
+  if(player.x + player.w > level.goalX){
+    if(level.isFinal){
+      state = 'rescue'; stateTimer = 0; camera.x = 0; sfx.win();
+    } else {
+      state = 'levelClear'; stateTimer = 0; sfx.confirm();
+    }
+  }
+}
+
+// ---------- HUD ----------
+// A little wink for her every time she takes a tumble into a pit.
+function drawFallQuip(){
+  if(fallQuipTimer <= 0) return;
+  const a = clamp(fallQuipTimer / 30, 0, 1) * (fallQuipTimer > 230 ? clamp((260 - fallQuipTimer) / 30, 0, 1) : 1);
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 16px "Nunito", sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('My sweet clumsy clumsy as always', W/2, H*0.42);
+  ctx.font = '20px sans-serif';
+  ctx.fillText('\u{1F495} \u{1F495} \u{1F495}', W/2, H*0.42 + 28);
+  ctx.restore();
+  fallQuipTimer--;
+}
+
+function drawHUD(){
+  for(let i=0;i<maxHearts;i++){
+    const filled = i < hearts;
+    ctx.globalAlpha = filled ? 1 : 0.3;
+    drawHeartShape(24 + i*24, 26, 10, '#e0435c');
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('×' + lives, 24 + maxHearts*24 + 10, 31);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#3fa9e0';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillText('◆ ' + gems, W - 20, 30);
+
+  if(levelBannerT > 0){
+    const a = clamp(levelBannerT / 40, 0, 1) * (levelBannerT > 280 ? clamp((320-levelBannerT)/40,0,1) : 1);
+    ctx.globalAlpha = a;
+    ctx.textAlign = 'center';
+    const hasQuip = !!level.quip;
+    const boxH = hasQuip ? 62 : 40;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(W/2-180, 60, 360, boxH);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px "Press Start 2P", monospace';
+    ctx.fillText(level.name, W/2, 86);
+    if(hasQuip){
+      ctx.font = 'italic 12px "Nunito", sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.fillText(level.quip, W/2, 106);
+    }
+    ctx.globalAlpha = 1;
+    levelBannerT--;
+  }
+  if(flashTimer > 0){
+    ctx.fillStyle = `rgba(255,0,0,${flashTimer/40})`;
+    ctx.fillRect(0,0,W,H);
+    flashTimer--;
+  }
+}
+
+// ---------- Screens ----------
+function drawScreenBackdrop(){
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, '#1b2440');
+  grad.addColorStop(1, '#0b0c14');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,W,H);
+  // faint stars
+  for(let i=0;i<40;i++){
+    const s = seededRand(i*77);
+    const x = s * W;
+    const y = seededRand(i*33+1) * H * 0.6;
+    ctx.globalAlpha = 0.4 + Math.sin(frameCount*0.03 + i) * 0.2;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x, y, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+}
+function titleText(text, y, size, color){
+  ctx.fillStyle = color || '#fff';
+  ctx.font = size + 'px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, W/2, y);
+}
+
+function renderTitle(){
+  drawScreenBackdrop();
+  const bob = Math.sin(frameCount*0.04) * 6;
+  titleText('SNEAKY', 190 + bob, 34, '#ffcf6b');
+  titleText('RAGNHEIÐUR', 234 + bob, 30, '#ffcf6b');
+  ctx.font = '13px "Nunito", sans-serif';
+  ctx.fillStyle = '#c9cee0';
+  ctx.fillText('a rescue for two, across two homelands', W/2, 274 + bob);
+
+  if(Math.floor(frameCount/30) % 2 === 0){
+    ctx.font = '14px "Press Start 2P", monospace';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PRESS ENTER TO START', W/2, 400);
+  }
+  ctx.font = '11px "Nunito", sans-serif';
+  ctx.fillStyle = '#6b7086';
+  ctx.fillText('a handmade gift', W/2, 500);
+
+  if(justPressed('Enter')){ state = 'select'; selectCursor = 0; sfx.confirm(); }
+}
+
+function renderSelect(){
+  drawScreenBackdrop();
+  titleText('CHOOSE YOUR HERO', 62, 18, '#fff');
+
+  const cardW = 250, cardH = 400, gap = 30;
+  const totalW = cardW*2 + gap;
+  const startX = W/2 - totalW/2;
+  const cardY = 84;
+
+  drawSelectCard(startX, cardY, cardW, cardH, 'ragnheidur', 'RAGNHEIÐUR', selectCursor===0);
+  drawSelectCard(startX + cardW + gap, cardY, cardW, cardH, 'stuart', 'STUART', selectCursor===1);
+
+  ctx.font = '12px "Nunito", sans-serif';
+  ctx.fillStyle = '#c9cee0';
+  ctx.textAlign = 'center';
+  ctx.fillText('← → to choose  ·  Enter to confirm', W/2, 512);
+
+  if((justPressed('ArrowLeft')||justPressed('KeyA')) ){ selectCursor = 0; sfx.select(); }
+  if((justPressed('ArrowRight')||justPressed('KeyD')) ){ selectCursor = 1; sfx.select(); }
+  if(justPressed('Enter')){
+    selectedChar = selectCursor === 0 ? 'ragnheidur' : 'stuart';
+    resetRun();
+    camera.x = 0; // drawCharacter() offsets by camera.x; reset so cutscenes render on-screen
+    state = 'kidnap'; stateTimer = 0;
+    sfx.confirm();
+  }
+}
+function drawSelectCard(x, y, w, h, type, label, active){
+  ctx.fillStyle = active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = active ? '#ffcf6b' : 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = active ? 3 : 1.5;
+  ctx.strokeRect(x, y, w, h);
+
+  const img = IMG_SELECT[type];
+  if(img.complete && img.naturalWidth > 0){
+    const pad = 16;
+    const areaW = w - pad*2, areaH = h - 70;
+    const scale = Math.min(areaW/img.naturalWidth, areaH/img.naturalHeight);
+    const iw = img.naturalWidth*scale, ih = img.naturalHeight*scale;
+    ctx.drawImage(img, x + (w-iw)/2, y + pad + (areaH-ih)/2, iw, ih);
+  }
+  ctx.font = '14px "Press Start 2P", monospace';
+  ctx.fillStyle = active ? '#ffcf6b' : '#cfd3e0';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + w/2, y + h - 22);
+}
+
+function renderKidnap(){
+  drawScreenBackdrop();
+  const capturedType = selectedChar === 'ragnheidur' ? 'stuart' : 'ragnheidur';
+  const capturedName = capturedType === 'ragnheidur' ? 'Ragnheiður' : 'Stuart';
+  titleText('MEANWHILE...', 56, 14, '#ff8fa3');
+
+  const cw = CUTSCENE_CHAR_W, ch = CUTSCENE_CHAR_H;
+  const groundY = 400;
+  const t = stateTimer;
+  // Paced slower than a typical game-logic beat on purpose — this is the
+  // story setup, so each phase gets enough screen time to actually read.
+  const HOLD_END = 40, APPROACH_END = 130, STRUGGLE_END = 260, DRAG_END = 400, CAGE_END = 660;
+  const vkOffset = cw + 60;
+
+  const charBaseX = W/2 - cw/2, charY = groundY - ch;
+  let charX = charBaseX, charAlpha = 1, shakeX = 0, shakeY = 0;
+  let vkAlpha = 0, vkX = W + 110, vkScale = 1.55;
+  let cageAlpha = 0;
+
+  if(t < HOLD_END){
+    // quiet beat before anything happens
+  } else if(t < APPROACH_END){
+    const p = (t - HOLD_END) / (APPROACH_END - HOLD_END);
+    vkAlpha = clamp(p * 1.4, 0, 1);
+    vkX = lerp(W + 110, charBaseX + vkOffset, easeOutQuad(p));
+    if(t === HOLD_END + 1) sfx.villainAppear();
+  } else if(t < STRUGGLE_END){
+    vkAlpha = 1;
+    vkX = charBaseX + vkOffset;
+    shakeX = Math.sin(t * 2.6) * 5;
+    shakeY = Math.cos(t * 3.1) * 2.5;
+    if((t - APPROACH_END) % 16 === 0){ sfx.struggle(); spawnSpark(charBaseX + cw/2, charY + 30, '#cfd3e0'); }
+  } else if(t < DRAG_END){
+    const p = (t - STRUGGLE_END) / (DRAG_END - STRUGGLE_END);
+    vkAlpha = 1 - p * 0.15;
+    const dragTargetX = W + 160;
+    vkX = lerp(charBaseX + vkOffset, dragTargetX, easeInQuad(p));
+    charX = lerp(charBaseX, dragTargetX - vkOffset, easeInQuad(p));
+    charAlpha = 1 - p;
+    if(t === STRUGGLE_END + 1) sfx.dragOff();
+  } else {
+    charAlpha = 0; vkAlpha = 0;
+    cageAlpha = clamp((t - DRAG_END) / 30, 0, 1);
+  }
+
+  if(charAlpha > 0){
+    ctx.save();
+    ctx.globalAlpha = charAlpha;
+    ctx.translate(shakeX, shakeY);
+    drawCharacter(charX, charY, cw, ch, -1, 0, true, capturedType, 0, t > APPROACH_END && t < DRAG_END, false);
+    ctx.restore();
+  }
+  drawVaultKeeperFigure(vkX, groundY - ch*0.62, vkScale, vkAlpha);
+  if(cageAlpha > 0){
+    const cageW = 190, cageH = 230, cageCX = W/2, cageCY = 300;
+    drawCage(cageCX, cageCY, cageW, cageH, cageAlpha, 0);
+    ctx.save();
+    ctx.globalAlpha = cageAlpha;
+    drawCharacter(cageCX - cw/2, cageCY + cageH/2 - 18 - ch, cw, ch, 1, 0, true, capturedType, 0, false, false);
+    ctx.restore();
+  }
+
+  ctx.font = '13px "Nunito", sans-serif';
+  ctx.fillStyle = '#e6e9f2';
+  ctx.textAlign = 'center';
+  let line;
+  if(t < HOLD_END) line = 'It\u2019s a quiet evening...';
+  else if(t < APPROACH_END) line = '...but someone else is watching.';
+  else if(t < STRUGGLE_END) line = capturedName + ' never saw it coming...';
+  else if(t < DRAG_END) line = 'Struggling won\u2019t help now...';
+  else line = '...and now ' + capturedName + ' is locked away.';
+  ctx.fillText(line, W/2, 460);
+
+  ctx.font = '11px "Nunito", sans-serif';
+  ctx.fillStyle = '#6b7086';
+  ctx.fillText('press enter to skip', W/2, 505);
+
+  stateTimer++;
+  if(justPressed('Enter') || stateTimer > CAGE_END){
+    state = 'storyIntro'; stateTimer = 0;
+  }
+}
+
+function renderStoryIntro(){
+  drawScreenBackdrop();
+  const other = selectedChar === 'ragnheidur' ? 'Stuart' : 'Ragnheiður';
+  const hero = selectedChar === 'ragnheidur' ? 'Ragnheiður' : 'Stuart';
+  titleText('THE STORY SO FAR', 70, 14, '#ffcf6b');
+
+  const img = IMG[selectedChar];
+  if(img.complete && img.naturalWidth > 0){
+    const areaH = 190, areaW = 190;
+    const scale = Math.min(areaW/img.naturalWidth, areaH/img.naturalHeight);
+    const iw = img.naturalWidth*scale, ih = img.naturalHeight*scale;
+    ctx.drawImage(img, W/2 - iw/2, 100, iw, ih);
+  }
+
+  ctx.font = '13px "Nunito", sans-serif';
+  ctx.fillStyle = '#e6e9f2';
+  ctx.textAlign = 'center';
+  const lines = [
+    other + ' has vanished — last seen near the fjords, dragged off by',
+    'the Vault Keeper and locked away in the Sunken Vault.',
+    '',
+    hero + ' isn\u2019t waiting around. Guns loaded, boots laced,',
+    'it\u2019s time to cross fjords, savanna, fire and jungle — and bring them home.'
+  ];
+  lines.forEach((line, i) => ctx.fillText(line, W/2, 318 + i*22));
+
+  if(Math.floor(frameCount/30) % 2 === 0){
+    ctx.font = '13px "Press Start 2P", monospace';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PRESS ENTER', W/2, 470);
+  }
+  if(justPressed('Enter')){
+    state = 'playing';
+    loadLevel(0);
+    sfx.confirm();
+  }
+}
+
+function renderLevelClear(){
+  render_playingFrozen();
+  ctx.fillStyle = 'rgba(10,10,20,0.55)';
+  ctx.fillRect(0,0,W,H);
+  titleText('LEVEL CLEAR!', 210, 22, '#ffcf6b');
+  ctx.font = '13px "Nunito", sans-serif';
+  ctx.fillStyle = '#e6e9f2';
+  ctx.textAlign = 'center';
+  ctx.fillText(level.name, W/2, 250);
+  ctx.fillText('Gems collected: ' + gems, W/2, 280);
+  if(Math.floor(frameCount/30) % 2 === 0){
+    ctx.font = '13px "Press Start 2P", monospace';
+    ctx.fillText('PRESS ENTER TO CONTINUE', W/2, 340);
+  }
+  if(justPressed('Enter')){
+    currentLevelIndex++;
+    loadLevel(currentLevelIndex);
+    state = 'playing';
+    sfx.confirm();
+  }
+}
+
+function renderRescue(){
+  drawScreenBackdrop();
+  titleText('THE VAULT KEEPER FALLS!', 66, 15, '#ffcf6b');
+  ctx.font = 'italic 11px "Nunito", sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.textAlign = 'center';
+  ctx.fillText('(rumor has it, close friends called him The Interstacles)', W/2, 84);
+
+  const other = selectedChar === 'ragnheidur' ? 'stuart' : 'ragnheidur';
+  const otherName = other === 'ragnheidur' ? 'Ragnheiður' : 'Stuart';
+  const cw = CUTSCENE_CHAR_W, ch = CUTSCENE_CHAR_H;
+  const groundY = 400;
+  const cageX = W*0.7, heroStartX = W*0.12, meetLeftX = W/2 - cw - 8, meetRightX = W/2 + 8;
+  const t = stateTimer;
+  const P1 = 70, P2 = 170;
+
+  let cageOpen, capturedX, heroX, walkT = 0;
+  if(t < P1){
+    cageOpen = clamp(t/P1, 0, 1);
+    capturedX = cageX; heroX = heroStartX;
+    if(t === 1) sfx.reunite();
+  } else if(t < P2){
+    cageOpen = 1;
+    const p = (t-P1)/(P2-P1);
+    capturedX = lerp(cageX, meetRightX, easeOutQuad(p));
+    heroX = lerp(heroStartX, meetLeftX, easeOutQuad(p));
+    walkT = t*0.3;
+  } else {
+    cageOpen = 1;
+    capturedX = meetRightX; heroX = meetLeftX;
+    if(t === P2+1) spawnCelebration((meetLeftX+meetRightX)/2 + cw/2, groundY - ch*0.5, 20);
+  }
+
+  drawCage(cageX, 300, 170, 210, 1, cageOpen);
+  drawCharacter(heroX, groundY-ch, cw, ch, 1, walkT, true, selectedChar, 0, false, false);
+  drawCharacter(capturedX, groundY-ch, cw, ch, -1, walkT, true, other, 0, false, false);
+
+  ctx.font = '13px "Nunito", sans-serif';
+  ctx.fillStyle = '#e6e9f2';
+  ctx.textAlign = 'center';
+  let line;
+  if(t < P1) line = 'The cage begins to give way...';
+  else if(t < P2) line = otherName + ' comes running!';
+  else line = 'The cage door swings open. ' + otherName + ' is free.';
+  ctx.fillText(line, W/2, 452);
+
+  stateTimer++;
+  if(stateTimer > P2+40 && Math.floor(frameCount/30)%2===0){
+    ctx.font = '13px "Press Start 2P", monospace';
+    ctx.fillText('PRESS ENTER', W/2, 490);
+  }
+  if(stateTimer > P2+40 && justPressed('Enter')){
+    state = 'win'; stateTimer = 0; sfx.confirm();
+  }
+}
+
+function renderWin(){
+  drawScreenBackdrop();
+  titleText('MISSION COMPLETE', 80, 18, '#ffcf6b');
+
+  const r = IMG.ragnheidur, s = IMG.stuart;
+  const areaH = 210;
+  if(r.complete && s.complete){
+    const rs = areaH/r.naturalHeight, ss = areaH/s.naturalHeight;
+    const rw = r.naturalWidth*rs, sw = s.naturalWidth*ss;
+    const totalW = rw + sw + 20;
+    const startX = W/2 - totalW/2;
+    ctx.drawImage(r, startX, 130, rw, areaH);
+    ctx.drawImage(s, startX + rw + 20, 130, sw, areaH);
+  }
+
+  if(frameCount % 12 === 0){
+    spawnConfettiDrop(20 + Math.random()*(W-40));
+  }
+
+  ctx.font = '13px "Nunito", sans-serif';
+  ctx.fillStyle = '#e6e9f2';
+  ctx.textAlign = 'center';
+  ctx.fillText('Together again. The End. ❤', W/2, 372);
+  ctx.font = '12px "Nunito", sans-serif';
+  ctx.fillStyle = '#c9cee0';
+  ctx.fillText('Total gems collected: ' + totalGemsCollected + '   ·   Lives remaining: ' + lives, W/2, 400);
+
+  stateTimer++;
+  if(stateTimer > 40 && Math.floor(frameCount/30)%2===0){
+    ctx.font = '13px "Press Start 2P", monospace';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('PRESS ENTER TO PLAY AGAIN', W/2, 460);
+  }
+  if(stateTimer > 40 && justPressed('Enter')){
+    state = 'title'; stateTimer = 0;
+  }
+}
+
+function renderGameOver(){
+  render_playingFrozen();
+  ctx.fillStyle = 'rgba(20,5,5,0.6)';
+  ctx.fillRect(0,0,W,H);
+  titleText('GAME OVER', 220, 22, '#ff6b6b');
+  ctx.font = '12px "Nunito", sans-serif';
+  ctx.fillStyle = '#e6e9f2';
+  ctx.textAlign = 'center';
+  ctx.fillText('Take a breath — try this level again.', W/2, 260);
+  stateTimer++;
+  if(stateTimer > 30 && Math.floor(frameCount/30)%2===0){
+    ctx.font = '13px "Press Start 2P", monospace';
+    ctx.fillText('PRESS ENTER TO RETRY', W/2, 320);
+  }
+  if(stateTimer > 30 && justPressed('Enter')){
+    lives = 3; hearts = maxHearts;
+    loadLevel(currentLevelIndex);
+    state = 'playing';
+    sfx.confirm();
+  }
+}
+
+function renderPaused(){
+  render_playingFrozen();
+  ctx.fillStyle = 'rgba(10,10,20,0.6)';
+  ctx.fillRect(0,0,W,H);
+  titleText('PAUSED', 220, 22, '#fff');
+
+  const options = ['RESUME', 'MAIN MENU'];
+  const startY = 300;
+  options.forEach((opt, i) => {
+    const active = pauseCursor === i;
+    ctx.font = '14px "Press Start 2P", monospace';
+    ctx.fillStyle = active ? '#ffcf6b' : '#c9cee0';
+    ctx.textAlign = 'center';
+    ctx.fillText((active ? '> ' : '') + opt + (active ? ' <' : ''), W/2, startY + i*42);
+  });
+
+  ctx.font = '12px "Nunito", sans-serif';
+  ctx.fillStyle = '#8a8fa3';
+  ctx.fillText('\u2191\u2193 to choose \u00b7 Enter to confirm \u00b7 Esc to resume', W/2, startY + options.length*42 + 18);
+
+  if(justPressed('ArrowUp') || justPressed('ArrowDown') || justPressed('KeyW') || justPressed('KeyS')){
+    pauseCursor = 1 - pauseCursor;
+    sfx.select();
+  }
+  if(justPressed('Enter')){
+    if(pauseCursor === 1){ state = 'title'; }
+    else { state = 'playing'; }
+    pauseCursor = 0;
+    sfx.confirm();
+  }
+}
+
+// Renders the game world frozen underneath overlay screens
+function render_playingFrozen(){
+  renderBackground(level.theme, camera.x, level.bgSeed);
+  renderSolids();
+  drawPickups();
+  for(const en of enemies) drawEnemy(en);
+  drawProjectiles();
+  drawCharacter(player.x, player.y, player.w, player.h, player.facing, player.walkT, player.onGround, player.type, player.shootAnim, false, false);
+  drawFallQuip();
+  drawHUD();
+}
+
+// ---------- Update & render dispatch ----------
+function update(dt){
+  updateParticles(); // heart-shower easter egg (Ctrl+Shift+H) can fire on any screen
+  if(state === 'playing'){
+    if(justPressed('Escape')){ state = 'paused'; return; }
+    updatePlayer(dt);
+    for(const en of enemies) updateEnemy(en, dt);
+    updateProjectiles();
+    checkPlayerEnemyContact();
+    checkPickups();
+    checkLevelProgress();
+    camera.x = clamp(player.x - W/2, 0, Math.max(0, level.width - W));
+  } else if(state === 'paused'){
+    if(justPressed('Escape')){ state = 'playing'; }
+  }
+  // title, select, storyIntro, kidnap, rescue, win: menu-driven, handled inline in their render functions
+}
+
+function render(){
+  frameCount++;
+  if(state === 'title') renderTitle();
+  else if(state === 'select') renderSelect();
+  else if(state === 'kidnap') renderKidnap();
+  else if(state === 'storyIntro') renderStoryIntro();
+  else if(state === 'playing') render_playingFrozen();
+  else if(state === 'paused') renderPaused();
+  else if(state === 'levelClear') renderLevelClear();
+  else if(state === 'rescue') renderRescue();
+  else if(state === 'win') renderWin();
+  else if(state === 'gameOver') renderGameOver();
+  drawParticles(); // universal overlay so the heart shower renders over any screen
+}
+
+// ---------- Main loop ----------
+let lastTs = 0;
+function loop(ts){
+  const dt = Math.min(ts - lastTs, 33) || 16;
+  lastTs = ts;
+  update(dt);
+  render();
+  scheduleMusic();
+  clearJustPressed();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
