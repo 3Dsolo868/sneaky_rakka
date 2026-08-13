@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sneaky Ragnheiður</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9D%A4%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
@@ -170,6 +171,8 @@ const SPRITE = {
   ragnheidur: (() => { const i = new Image(); i.src = 'ragnheidur_sprite.png'; return i; })(),
   stuart:     (() => { const i = new Image(); i.src = 'stuart_sprite.png'; return i; })(),
 };
+// Boss art — Ragga Muffin, used both in the level-5 fight and the kidnap cutscene.
+const BOSS_IMG = (() => { const i = new Image(); i.src = 'raggamuffin_sprite.png'; return i; })();
 
 // ---------- Audio (tiny synth, no files needed) ----------
 let actx = null;
@@ -234,31 +237,41 @@ const sfx = {
 // ---------- Background music (simple looping chiptune, no audio files) ----------
 // A short pentatonic melody + a two-note bass drone, scheduled just ahead of
 // playback time (the standard Web Audio lookahead pattern) so it loops
-// smoothly without drifting or stuttering.
+// smoothly without drifting or stuttering. The title screen gets its own
+// original, brighter tune (not based on any existing song) instead of the
+// regular gameplay loop.
 const NOTE_C4 = 261.63;
 function noteFreq(semitones){ return NOTE_C4 * Math.pow(2, semitones / 12); }
+function beatDur(bpm){ return 60 / bpm; }
 const MUSIC_BPM = 108;
-const EIGHTH = 60 / MUSIC_BPM / 2;
-const QUARTER = 60 / MUSIC_BPM;
 // C major pentatonic riff (semitones from C4), two bars, 16 eighth notes:
 const MELODY = [0,4,7,4, 9,7,4,2, 0,4,7,9, 12,9,7,4];
 // Simple root/fifth drone underneath, one note per quarter (8 per loop):
 const BASS = [-12,-5,-12,-5, -12,-5,-8,-5];
+// Title-screen theme: brighter, faster, original celebratory contour.
+const TITLE_BPM = 132;
+const TITLE_MELODY = [0,4,7,12, 9,7,4,0, 2,5,9,12, 11,9,7,4];
+const TITLE_BASS = [-12,-12,-5,-5, -12,-12,-8,-8];
 const music = { noteIdx:0, nextTime:0, bassIdx:0, bassNextTime:0, inited:false };
 function scheduleMusic(){
   if(muted || !actx) return;
+  const onTitle = (state === 'title');
+  const bpm = onTitle ? TITLE_BPM : MUSIC_BPM;
+  const eighth = beatDur(bpm) / 2, quarter = beatDur(bpm);
+  const melody = onTitle ? TITLE_MELODY : MELODY;
+  const bass = onTitle ? TITLE_BASS : BASS;
   const now = actx.currentTime;
   if(!music.inited || music.nextTime < now){ music.nextTime = now + 0.05; music.inited = true; }
   if(music.bassNextTime < now) music.bassNextTime = now + 0.05;
   while(music.nextTime < now + 0.12){
-    tone(noteFreq(MELODY[music.noteIdx % MELODY.length]), music.nextTime, EIGHTH * 0.85, 'triangle', 0.045);
+    tone(noteFreq(melody[music.noteIdx % melody.length]), music.nextTime, eighth * 0.85, 'triangle', 0.045);
     music.noteIdx++;
-    music.nextTime += EIGHTH;
+    music.nextTime += eighth;
   }
   while(music.bassNextTime < now + 0.12){
-    tone(noteFreq(BASS[music.bassIdx % BASS.length]), music.bassNextTime, QUARTER * 0.9, 'sine', 0.05);
+    tone(noteFreq(bass[music.bassIdx % bass.length]), music.bassNextTime, quarter * 0.9, 'sine', 0.05);
     music.bassIdx++;
-    music.bassNextTime += QUARTER;
+    music.bassNextTime += quarter;
   }
 }
 
@@ -364,7 +377,7 @@ const PALETTES = {
 };
 
 // ---------- Theme visuals ----------
-// The Vault Keeper's fight-time taunts — a private joke, since he's
+// Ragga Muffin's fight-time taunts — a private joke, since he's
 // fiercely, mysteriously protective of his interstacles.
 const BOSS_TAUNTS = [
   "You'll never reach my interstacles!",
@@ -606,6 +619,7 @@ let levelBannerT = 0;
 let stateTimer = 0;
 let selectCursor = 0; // 0 = ragnheidur, 1 = stuart
 let pauseCursor = 0; // 0 = resume, 1 = main menu
+let creditsScrollY = 0;
 let totalGemsCollected = 0;
 
 function resetRun(){
@@ -1320,20 +1334,32 @@ function themeEnemyColor(theme, idx){
   return sets[theme][idx];
 }
 function drawBoss(en, sx, flash){
-  const pulse = Math.sin(frameCount*0.15)*4;
-  ctx.fillStyle = flash ? '#ffffff' : '#3a2440';
-  ctx.beginPath();
-  ctx.ellipse(sx + en.w/2, en.y + en.h/2 + pulse*0.2, en.w/2 + pulse, en.h/2, 0, 0, Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle = '#e0a23c'; ctx.lineWidth = 3;
-  ctx.stroke();
-  // eyes
-  ctx.fillStyle = '#ffdb6b';
-  ctx.beginPath(); ctx.arc(sx + en.w*0.35, en.y + en.h*0.42, 6, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(sx + en.w*0.65, en.y + en.h*0.42, 6, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#2a1030';
-  ctx.beginPath(); ctx.arc(sx + en.w*0.35, en.y + en.h*0.42, 2.6, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(sx + en.w*0.65, en.y + en.h*0.42, 2.6, 0, Math.PI*2); ctx.fill();
+  const cx = sx + en.w/2, cy = en.y + en.h/2;
+  const img = BOSS_IMG;
+  let drawH = en.h * 2.9, drawW = drawH * 0.7;
+  if(img && img.complete && img.naturalWidth > 0){
+    drawW = drawH * (img.naturalWidth / img.naturalHeight);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
+    if(flash){
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillRect(-drawW/2, -drawH/2, drawW, drawH);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.restore();
+  } else {
+    // Fallback shown only for the brief moment before the image finishes loading.
+    const pulse = Math.sin(frameCount*0.15)*4;
+    ctx.fillStyle = flash ? '#ffffff' : '#3a2440';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + pulse*0.2, en.w/2 + pulse, en.h/2, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = '#e0a23c'; ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
   // boss health bar
   const barW = 220, barX = W/2 - barW/2, barY = 24;
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -1343,54 +1369,46 @@ function drawBoss(en, sx, flash){
   ctx.strokeStyle = 'rgba(255,255,255,0.5)';
   ctx.strokeRect(barX, barY, barW, 12);
   ctx.fillStyle = '#eee'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('THE VAULT KEEPER', W/2, barY - 4);
+  ctx.fillText('RAGGA MUFFIN', W/2, barY - 4);
 
   if(en.tauntTimer > 0){
     const a = clamp(en.tauntTimer / 20, 0, 1) * (en.tauntTimer > 180 ? clamp((200-en.tauntTimer)/20, 0, 1) : 1);
     ctx.save();
     ctx.globalAlpha = a;
-    const bubbleY = en.y - 22;
+    const bubbleY = cy - drawH/2 - 10;
     ctx.font = 'bold 11px "Nunito", sans-serif';
     const textW = ctx.measureText(en.tauntText).width;
     ctx.fillStyle = 'rgba(10,10,18,0.75)';
-    ctx.fillRect(sx + en.w/2 - textW/2 - 8, bubbleY - 14, textW + 16, 20);
+    ctx.fillRect(cx - textW/2 - 8, bubbleY - 14, textW + 16, 20);
     ctx.fillStyle = '#ffdb6b';
     ctx.textAlign = 'center';
-    ctx.fillText(en.tauntText, sx + en.w/2, bubbleY);
+    ctx.fillText(en.tauntText, cx, bubbleY);
     ctx.restore();
   }
 }
 
-// A standalone version of the Vault Keeper's look, for cutscenes (the
-// in-level boss uses drawBoss() above; same palette, so the villain reads
-// as the same character in the kidnapping scene and the final boss fight).
-function drawVaultKeeperFigure(cx, cy, scale, alpha){
+// Ragga Muffin's look for cutscenes — same sprite as the in-level boss
+// (drawBoss above), so the villain reads as the same character in the
+// kidnapping scene and the final fight.
+function drawRaggaMuffinFigure(cx, cy, scale, alpha){
   if(alpha <= 0) return;
+  const img = BOSS_IMG;
   ctx.save();
   ctx.globalAlpha = alpha;
-  const pulse = Math.sin(frameCount*0.15) * 3 * scale;
-  ctx.strokeStyle = 'rgba(58,36,64,0.85)';
-  ctx.lineWidth = 9 * scale; ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(cx - 32*scale, cy + 6*scale);
-  ctx.quadraticCurveTo(cx - 66*scale, cy + 34*scale, cx - 78*scale, cy + 66*scale);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(cx + 32*scale, cy + 6*scale);
-  ctx.quadraticCurveTo(cx + 60*scale, cy + 30*scale, cx + 66*scale, cy + 64*scale);
-  ctx.stroke();
-  ctx.fillStyle = '#3a2440';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + pulse*0.2, 44*scale + pulse, 56*scale, 0, 0, Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle = '#e0a23c'; ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.fillStyle = '#ffdb6b';
-  ctx.beginPath(); ctx.arc(cx - 14*scale, cy - 4*scale, 6*scale, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx + 14*scale, cy - 4*scale, 6*scale, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#2a1030';
-  ctx.beginPath(); ctx.arc(cx - 14*scale, cy - 4*scale, 2.6*scale, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(cx + 14*scale, cy - 4*scale, 2.6*scale, 0, Math.PI*2); ctx.fill();
+  if(img && img.complete && img.naturalWidth > 0){
+    const drawH = 150 * scale;
+    const drawW = drawH * (img.naturalWidth / img.naturalHeight);
+    ctx.drawImage(img, cx - drawW/2, cy - drawH/2, drawW, drawH);
+  } else {
+    // Fallback shown only for the brief moment before the image finishes loading.
+    const pulse = Math.sin(frameCount*0.15) * 3 * scale;
+    ctx.fillStyle = '#3a2440';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + pulse*0.2, 44*scale + pulse, 56*scale, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle = '#e0a23c'; ctx.lineWidth = 3;
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -1664,7 +1682,7 @@ function renderKidnap(){
   // Paced slower than a typical game-logic beat on purpose — this is the
   // story setup, so each phase gets enough screen time to actually read.
   const HOLD_END = 40, APPROACH_END = 130, STRUGGLE_END = 260, DRAG_END = 400, CAGE_END = 660;
-  const vkOffset = cw + 60;
+  const vkOffset = cw + 140; // villain's now a full detailed figure, not an abstract blob — needs real breathing room so it doesn't cover the captured character
 
   const charBaseX = W/2 - cw/2, charY = groundY - ch;
   let charX = charBaseX, charAlpha = 1, shakeX = 0, shakeY = 0;
@@ -1704,7 +1722,7 @@ function renderKidnap(){
     drawCharacter(charX, charY, cw, ch, -1, 0, true, capturedType, 0, t > APPROACH_END && t < DRAG_END, false);
     ctx.restore();
   }
-  drawVaultKeeperFigure(vkX, groundY - ch*0.62, vkScale, vkAlpha);
+  drawRaggaMuffinFigure(vkX, groundY - ch*0.62, vkScale, vkAlpha);
   if(cageAlpha > 0){
     const cageW = 190, cageH = 230, cageCX = W/2, cageCY = 300;
     drawCage(cageCX, cageCY, cageW, cageH, cageAlpha, 0);
@@ -1754,7 +1772,7 @@ function renderStoryIntro(){
   ctx.textAlign = 'center';
   const lines = [
     other + ' has vanished — last seen near the fjords, dragged off by',
-    'the Vault Keeper and locked away in the Sunken Vault.',
+    'Ragga Muffin and locked away in the Sunken Vault.',
     '',
     hero + ' isn\u2019t waiting around. Guns loaded, boots laced,',
     'it\u2019s time to cross fjords, savanna, fire and jungle — and bring them home.'
@@ -1797,7 +1815,7 @@ function renderLevelClear(){
 
 function renderRescue(){
   drawScreenBackdrop();
-  titleText('THE VAULT KEEPER FALLS!', 66, 15, '#ffcf6b');
+  titleText('RAGGA MUFFIN FALLS!', 66, 15, '#ffcf6b');
   ctx.font = 'italic 11px "Nunito", sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.textAlign = 'center';
@@ -1882,10 +1900,44 @@ function renderWin(){
   if(stateTimer > 40 && Math.floor(frameCount/30)%2===0){
     ctx.font = '13px "Press Start 2P", monospace';
     ctx.fillStyle = '#fff';
-    ctx.fillText('PRESS ENTER TO PLAY AGAIN', W/2, 460);
+    ctx.fillText('PRESS ENTER TO CONTINUE', W/2, 460);
   }
   if(stateTimer > 40 && justPressed('Enter')){
-    state = 'title'; stateTimer = 0;
+    state = 'credits'; creditsScrollY = 0; stateTimer = 0; sfx.confirm();
+  }
+}
+
+// A warm, funny credits roll — the closing capstone of the whole gift.
+const CREDITS_LINES = [
+  { text:'SNEAKY RAGNHEIÐUR', font:'pixel', size:20, color:'#ffcf6b', gap:60 },
+  { text:'starring', size:12, color:'#8a8fa3', gap:30 },
+  { text:'Ragnheiður', size:19, color:'#fff', gap:34 },
+  { text:'Stuart', size:19, color:'#fff', gap:56 },
+  { text:'Ragga Muffin\u2019s Interstacles ..... Himself', size:13, color:'#c9cee0', gap:28 },
+  { text:'Jacket Reminder Services ..... A Concerned Voice', size:13, color:'#c9cee0', gap:28 },
+  { text:'Heart Shower Technician ..... Ctrl + Shift + H', size:13, color:'#c9cee0', gap:28 },
+  { text:'Pit-Falling Choreography ..... You, mostly', size:13, color:'#c9cee0', gap:28 },
+  { text:'Snacks, Executive Producer of ..... TBD', size:13, color:'#c9cee0', gap:56 },
+  { text:'Made with love, for you.', size:15, color:'#ff8fa3', gap:34 },
+  { text:'Happy Birthday, Sweetheart. \u{1F495}', size:17, color:'#ffb3c1', gap:70 },
+  { text:'press enter to return to title', size:11, color:'#6b7086', gap:0 },
+];
+function renderCredits(){
+  drawScreenBackdrop();
+  ctx.textAlign = 'center';
+  let y = H - creditsScrollY;
+  for(const line of CREDITS_LINES){
+    if(line.text){
+      ctx.font = (line.font === 'pixel' ? line.size + 'px "Press Start 2P", monospace' : line.size + 'px "Nunito", sans-serif');
+      ctx.fillStyle = line.color || '#fff';
+      ctx.fillText(line.text, W/2, y);
+    }
+    y += line.gap || 30;
+  }
+  creditsScrollY += 1.3;
+  const totalHeight = CREDITS_LINES.reduce((s,l) => s + (l.gap || 30), 0);
+  if(justPressed('Enter') || creditsScrollY > H + totalHeight + 60){
+    state = 'title'; creditsScrollY = 0;
   }
 }
 
@@ -1984,6 +2036,7 @@ function render(){
   else if(state === 'levelClear') renderLevelClear();
   else if(state === 'rescue') renderRescue();
   else if(state === 'win') renderWin();
+  else if(state === 'credits') renderCredits();
   else if(state === 'gameOver') renderGameOver();
   drawParticles(); // universal overlay so the heart shower renders over any screen
 }
