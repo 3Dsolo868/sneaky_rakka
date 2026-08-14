@@ -277,9 +277,10 @@ function scheduleMusic(){
 
 // ---------- Input ----------
 const keys = {};
-const KEYS_CAPTURED = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD','KeyX','KeyJ','Enter','Escape','KeyM'];
+const KEYS_CAPTURED = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD','KeyR','KeyX','KeyJ','Enter','Escape','KeyM'];
 // Named so touch controls can call the exact same code path as a real
 // keyboard event — one input pipeline, two ways to trigger it.
+let heartComboActive = false;
 function handleKeyDown(e){
   ensureAudio();
   if(KEYS_CAPTURED.includes(e.code)) e.preventDefault();
@@ -287,12 +288,15 @@ function handleKeyDown(e){
   if(!keys[e.code]) keys.__justPressed[e.code] = true;
   keys[e.code] = true;
   if(e.code === 'KeyM') toggleMute();
-  if(e.ctrlKey && e.shiftKey && e.code === 'KeyH'){
-    e.preventDefault();
+  if(keys['KeyR'] && keys['KeyS'] && !heartComboActive){
+    heartComboActive = true;
     spawnHeartShower();
   }
 }
-function handleKeyUp(e){ keys[e.code] = false; }
+function handleKeyUp(e){
+  keys[e.code] = false;
+  if(e.code === 'KeyR' || e.code === 'KeyS') heartComboActive = false;
+}
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
 function justPressed(code){
@@ -383,6 +387,13 @@ const BOSS_TAUNTS = [
   "You'll never reach my interstacles!",
   "Not the interstacles! Anything but that!",
   "Protect... the interstacles...",
+];
+// Her personal notes, one per level, shown on that level's "LEVEL CLEAR!" screen.
+const LEVEL_CLEAR_QUIPS = [
+  "This is not SIMS 3 but you're nailing it as well, honey bunny",
+  "Babe, hurry up, Muffin is squeezing my intestacles... Ahhhh!",
+  "Please pick up some yoghurt and white wine on the way to rescue me! :)",
+  "OH! OH! - I've just realized there's a mirror in this dungeon. Maybe after you defeat Ragga Muffin, we can get to Freakin'",
 ];
 
 const THEMES = {
@@ -649,14 +660,19 @@ function makePlayer(type, x, y){
 }
 
 // ---------- Collision helpers ----------
-// Ground and platforms are "landing" surfaces only: any overlap resolves by
-// snapping the entity onto the top. They never block sideways movement. This
-// keeps missed jumps feeling right (you fall past the ledge into the gap)
-// instead of the classic bug where a low-angle approach to a ledge reads as
-// hitting a wall, freezing the entity in place while it sinks through.
-function resolveLanding(e, solids){
+// Ground and platforms are "landing" surfaces: they snap an entity onto
+// the top, but only when the entity's feet were actually above the surface
+// on the previous frame — i.e. it's genuinely landing from above, not just
+// grazing a far ledge's corner while sailing past it mid-fall. Without that
+// check, a fast horizontal run could get "caught" by any ledge its feet
+// happened to be level with, letting players coast straight over gaps that
+// are supposed to require a jump. They also never block sideways movement,
+// so a missed jump still falls cleanly into the gap instead of hitting an
+// invisible wall.
+function resolveLanding(e, solids, prevBottom){
   for(const s of solids){
     if(!overlap(e, s)) continue;
+    if(prevBottom > s.y + 1) continue; // wasn't above this surface last frame — don't snap
     e.y = s.y - e.h;
     e.vy = 0;
     e.onGround = true;
@@ -710,10 +726,11 @@ function spawnConfettiDrop(x){
   const color = CELEBRATION_COLORS[Math.floor(Math.random()*CELEBRATION_COLORS.length)];
   particles.push({ x, y:-10, vx:(Math.random()-0.5)*1.5, vy:0.5+Math.random(), life:220, maxLife:220, r:3+Math.random()*2, color });
 }
-// Secret shower of hearts — Ctrl+Shift+H, works on any screen, any time.
+// Secret shower of hearts — R + S together. A tap gives one burst; holding
+// keeps it raining until either key is released.
 const HEART_SHOWER_COLORS = ['#ff6b81', '#ff8fa3', '#ffb3c1', '#ff4d6d'];
-function spawnHeartShower(){
-  for(let i=0;i<50;i++){
+function spawnHearts(count){
+  for(let i=0;i<count;i++){
     particles.push({
       x: camera.x + Math.random()*W, y: -20 - Math.random()*260,
       vx: (Math.random()-0.5)*1.4, vy: 1 + Math.random()*1.6,
@@ -722,6 +739,9 @@ function spawnHeartShower(){
       shape: 'heart'
     });
   }
+}
+function spawnHeartShower(){
+  spawnHearts(50);
   sfx.heartShower();
 }
 function updateParticles(){
@@ -793,10 +813,11 @@ function updatePlayer(dt){
   if(p.shootAnim > 0) p.shootAnim--;
 
   const solids = level.solids;
+  const prevBottom = p.y + p.h;
   p.x += p.vx;
   p.y += p.vy;
   p.onGround = false;
-  resolveLanding(p, solids);
+  resolveLanding(p, solids, prevBottom);
   resolveWalls(p, activeWalls());
 
   if(p.x < 0) p.x = 0;
@@ -821,8 +842,9 @@ function updateEnemy(en, dt){
     en.vy += GRAVITY;
     if(en.vy > MAX_FALL) en.vy = MAX_FALL;
     en.onGround = false;
+    const prevBottom = en.y + en.h;
     en.y += en.vy;
-    resolveLanding(en, solids);
+    resolveLanding(en, solids, prevBottom);
     en.animT += 0.15;
   } else if(en.type === 'shooter'){
     en.timer--;
@@ -1496,6 +1518,41 @@ function drawHeartShape(cx, cy, size, color){
   ctx.closePath();
   ctx.fill();
 }
+function wrapText(text, maxWidth){
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  for(const word of words){
+    const test = current ? current + ' ' + word : word;
+    if(current && ctx.measureText(test).width > maxWidth){
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if(current) lines.push(current);
+  return lines;
+}
+// Shared style for her personal messages sprinkled through the game — same
+// warm pink glow as the birthday wish on the title screen, everywhere it
+// shows up. Returns the number of lines drawn (wraps long messages).
+function drawCommentaryText(text, x, y, opts){
+  opts = opts || {};
+  const size = opts.size || 15;
+  const maxWidth = opts.maxWidth || 780;
+  const lineHeight = opts.lineHeight || (size + 9);
+  ctx.save();
+  ctx.font = `bold ${size}px "Nunito", sans-serif`;
+  ctx.textAlign = 'center';
+  const lines = wrapText(text, maxWidth);
+  ctx.fillStyle = '#ffb3c1';
+  ctx.shadowColor = '#ff8fa3';
+  ctx.shadowBlur = 12 + Math.sin(frameCount*0.06) * 4;
+  lines.forEach((line, i) => ctx.fillText(line, x, y + i*lineHeight));
+  ctx.restore();
+  return lines.length;
+}
 
 // ---------- Goal / boss defeat ----------
 function checkLevelProgress(){
@@ -1519,10 +1576,8 @@ function drawFallQuip(){
   const a = clamp(fallQuipTimer / 30, 0, 1) * (fallQuipTimer > 230 ? clamp((260 - fallQuipTimer) / 30, 0, 1) : 1);
   ctx.save();
   ctx.globalAlpha = a;
+  drawCommentaryText('My sweet clumsy clumsy as always', W/2, H*0.42, { size:16, maxWidth:800, lineHeight:22 });
   ctx.textAlign = 'center';
-  ctx.font = 'bold 16px "Nunito", sans-serif';
-  ctx.fillStyle = '#fff';
-  ctx.fillText('My sweet clumsy clumsy as always', W/2, H*0.42);
   ctx.font = '20px sans-serif';
   ctx.fillText('\u{1F495} \u{1F495} \u{1F495}', W/2, H*0.42 + 28);
   ctx.restore();
@@ -1558,9 +1613,7 @@ function drawHUD(){
     ctx.font = '16px "Press Start 2P", monospace';
     ctx.fillText(level.name, W/2, 86);
     if(hasQuip){
-      ctx.font = 'italic 12px "Nunito", sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.75)';
-      ctx.fillText(level.quip, W/2, 106);
+      drawCommentaryText(level.quip, W/2, 106, { size:12, maxWidth:340, lineHeight:16 });
     }
     ctx.globalAlpha = 1;
     levelBannerT--;
@@ -1801,9 +1854,19 @@ function renderLevelClear(){
   ctx.textAlign = 'center';
   ctx.fillText(level.name, W/2, 250);
   ctx.fillText('Gems collected: ' + gems, W/2, 280);
+
+  const quip = LEVEL_CLEAR_QUIPS[currentLevelIndex];
+  let quipLines = 0;
+  if(quip){
+    quipLines = drawCommentaryText(quip, W/2, 320, { size:15, maxWidth:760, lineHeight:24 });
+  }
+  const promptY = 320 + Math.max(quipLines,1)*24 + 24;
+
   if(Math.floor(frameCount/30) % 2 === 0){
     ctx.font = '13px "Press Start 2P", monospace';
-    ctx.fillText('PRESS ENTER TO CONTINUE', W/2, 340);
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText('PRESS ENTER TO CONTINUE', W/2, promptY);
   }
   if(justPressed('Enter')){
     currentLevelIndex++;
@@ -1816,10 +1879,7 @@ function renderLevelClear(){
 function renderRescue(){
   drawScreenBackdrop();
   titleText('RAGGA MUFFIN FALLS!', 66, 15, '#ffcf6b');
-  ctx.font = 'italic 11px "Nunito", sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.5)';
-  ctx.textAlign = 'center';
-  ctx.fillText('(rumor has it, close friends called him The Interstacles)', W/2, 84);
+  drawCommentaryText('(rumor has it, close friends called him The Interstacles)', W/2, 84, { size:11, maxWidth:820, lineHeight:16 });
 
   const other = selectedChar === 'ragnheidur' ? 'stuart' : 'ragnheidur';
   const otherName = other === 'ragnheidur' ? 'Ragnheiður' : 'Stuart';
@@ -1913,13 +1973,13 @@ const CREDITS_LINES = [
   { text:'starring', size:12, color:'#8a8fa3', gap:30 },
   { text:'Ragnheiður', size:19, color:'#fff', gap:34 },
   { text:'Stuart', size:19, color:'#fff', gap:56 },
-  { text:'Ragga Muffin\u2019s Interstacles ..... Himself', size:13, color:'#c9cee0', gap:28 },
-  { text:'Jacket Reminder Services ..... A Concerned Voice', size:13, color:'#c9cee0', gap:28 },
-  { text:'Heart Shower Technician ..... Ctrl + Shift + H', size:13, color:'#c9cee0', gap:28 },
-  { text:'Pit-Falling Choreography ..... You, mostly', size:13, color:'#c9cee0', gap:28 },
-  { text:'Snacks, Executive Producer of ..... TBD', size:13, color:'#c9cee0', gap:56 },
-  { text:'Made with love, for you.', size:15, color:'#ff8fa3', gap:34 },
-  { text:'Happy Birthday, Sweetheart. \u{1F495}', size:17, color:'#ffb3c1', gap:70 },
+  { text:'Ragga Muffin\u2019s Interstacles ..... Himself', size:13, color:'#ffb3c1', bold:true, gap:28 },
+  { text:'Jacket Reminder Services ..... A Concerned Voice', size:13, color:'#ffb3c1', bold:true, gap:28 },
+  { text:'Heart Shower Technician ..... R + S', size:13, color:'#ffb3c1', bold:true, gap:28 },
+  { text:'Pit-Falling Choreography ..... You, mostly', size:13, color:'#ffb3c1', bold:true, gap:28 },
+  { text:'Snacks, Executive Producer of ..... TBD', size:13, color:'#ffb3c1', bold:true, gap:56 },
+  { text:'Made with love, for you.', size:15, color:'#ffb3c1', bold:true, gap:34 },
+  { text:'Happy Birthday, Sweetheart. \u{1F495}', size:17, color:'#ffb3c1', bold:true, gap:70 },
   { text:'press enter to return to title', size:11, color:'#6b7086', gap:0 },
 ];
 function renderCredits(){
@@ -1928,13 +1988,17 @@ function renderCredits(){
   let y = H - creditsScrollY;
   for(const line of CREDITS_LINES){
     if(line.text){
-      ctx.font = (line.font === 'pixel' ? line.size + 'px "Press Start 2P", monospace' : line.size + 'px "Nunito", sans-serif');
+      const weight = line.bold ? 'bold ' : '';
+      ctx.font = (line.font === 'pixel' ? line.size + 'px "Press Start 2P", monospace' : weight + line.size + 'px "Nunito", sans-serif');
       ctx.fillStyle = line.color || '#fff';
+      if(line.bold){ ctx.shadowColor = '#ff8fa3'; ctx.shadowBlur = 10 + Math.sin(frameCount*0.06) * 4; }
+      else { ctx.shadowBlur = 0; }
       ctx.fillText(line.text, W/2, y);
     }
     y += line.gap || 30;
   }
-  creditsScrollY += 1.3;
+  ctx.shadowBlur = 0;
+  creditsScrollY += 0.5; // slow, legible movie-credits pace — was 1.3, way too fast to read
   const totalHeight = CREDITS_LINES.reduce((s,l) => s + (l.gap || 30), 0);
   if(justPressed('Enter') || creditsScrollY > H + totalHeight + 60){
     state = 'title'; creditsScrollY = 0;
@@ -2009,7 +2073,8 @@ function render_playingFrozen(){
 
 // ---------- Update & render dispatch ----------
 function update(dt){
-  updateParticles(); // heart-shower easter egg (Ctrl+Shift+H) can fire on any screen
+  updateParticles(); // heart-shower easter egg (R + S) can fire on any screen
+  if(keys['KeyR'] && keys['KeyS'] && frameCount % 2 === 0) spawnHearts(1); // keeps raining while held
   if(state === 'playing'){
     if(justPressed('Escape')){ state = 'paused'; return; }
     updatePlayer(dt);
