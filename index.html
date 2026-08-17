@@ -442,34 +442,34 @@ const LEVEL_CLEAR_QUIPS = [
 
 const THEMES = {
   fjord: {
-    sky1:'#bfe3ef', sky2:'#eaf6f2', far:'#9cc9d6', near:'#6fa8b8',
-    ground:'#e8f2f4', groundDk:'#b9d3d9', groundLine:'#dff0f2',
-    platform:'#dcecee', platformDk:'#a9c7cc',
-    accent:'#2f7d95', label:'The Frozen Fjord'
+    sky1:'#3fa9e0', sky2:'#c3ecf9', far:'#5f95b3', near:'#3d7292',
+    ground:'#eef9fb', groundDk:'#8fc3d1', groundLine:'#ffffff',
+    platform:'#dcecee', platformDk:'#83b6c4',
+    accent:'#1f6b85', outline:'#194a5c', label:'The Frozen Fjord'
   },
   savanna: {
-    sky1:'#ffd98a', sky2:'#fff2d0', far:'#e0a95c', near:'#c98a3e',
-    ground:'#c99a4f', groundDk:'#a97a35', groundLine:'#e0b86e',
-    platform:'#b5843f', platformDk:'#8f6630',
-    accent:'#7a4a1e', label:'The Golden Savanna'
+    sky1:'#ffb23f', sky2:'#ffe7a8', far:'#d9873a', near:'#b5682a',
+    ground:'#d99c47', groundDk:'#8f5a24', groundLine:'#ffd68a',
+    platform:'#b5843f', platformDk:'#7a5424',
+    accent:'#5c3813', outline:'#40260d', label:'The Golden Savanna'
   },
   volcanic: {
-    sky1:'#2b1420', sky2:'#5c2233', far:'#3a1b28', near:'#241119',
-    ground:'#3a3a3f', groundDk:'#211f22', groundLine:'#57452f',
-    platform:'#4a4448', platformDk:'#2a262a',
-    accent:'#ff7a3c', label:'The Volcanic Highlands'
+    sky1:'#220a14', sky2:'#7a2540', far:'#4a1830', near:'#2a0f1c',
+    ground:'#413e46', groundDk:'#211f22', groundLine:'#6b5238',
+    platform:'#4a4448', platformDk:'#241f24',
+    accent:'#ff5a2e', outline:'#1a0810', label:'The Volcanic Highlands'
   },
   rainforest: {
-    sky1:'#bfe0a8', sky2:'#e8f5da', far:'#6fa15a', near:'#4b7d40',
-    ground:'#5a7a3d', groundDk:'#3d5729', groundLine:'#7ea153',
-    platform:'#6b8c47', platformDk:'#465e2c',
-    accent:'#2e5c2a', label:'The Emerald Rainforest'
+    sky1:'#7bd45c', sky2:'#e4f7c8', far:'#4f8f3a', near:'#2f5f24',
+    ground:'#4a7a2e', groundDk:'#2a4419', groundLine:'#8fd257',
+    platform:'#5f8a3d', platformDk:'#345423',
+    accent:'#1f4518', outline:'#132b0f', label:'The Emerald Rainforest'
   },
   dungeon: {
-    sky1:'#16141c', sky2:'#26202c', far:'#2a2432', near:'#1c1822',
-    ground:'#4a444e', groundDk:'#2b2731', groundLine:'#5c5560',
-    platform:'#544e58', platformDk:'#332f38',
-    accent:'#e0a23c', label:'The Sunken Vault'
+    sky1:'#100d16', sky2:'#291f34', far:'#302739', near:'#1a1521',
+    ground:'#4e4854', groundDk:'#252029', groundLine:'#756c80',
+    platform:'#544e58', platformDk:'#2b2730',
+    accent:'#ffb84c', outline:'#0c0a10', label:'The Sunken Vault'
   }
 };
 
@@ -1093,6 +1093,33 @@ function tiledDecor(camX, factor, spacing, seedBase, drawFn){
     drawFn(x, seed);
   }
 }
+// A bold, crisply-outlined fluffy cloud — a cluster of overlapping circles
+// with one shared stroke, matching the punchy pixel-art reference look
+// rather than a soft blurred puff.
+function drawCloudPuff(cx, cy, scale){
+  const lobes = [
+    [0, 0, 22], [18, -6, 17], [-18, -4, 16], [34, 2, 13], [-32, 3, 12], [0, -14, 15]
+  ];
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath();
+  for(const [ox, oy, r] of lobes){
+    ctx.moveTo(ox + r, oy);
+    ctx.arc(ox, oy, r, 0, Math.PI * 2);
+  }
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(60,110,140,0.28)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  for(const [ox, oy, r] of lobes){
+    ctx.moveTo(ox + r, oy);
+    ctx.arc(ox, oy, r, 0, Math.PI * 2);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
 
 function renderBackground(theme, camX, seed){
   const t = THEMES[theme];
@@ -1102,20 +1129,32 @@ function renderBackground(theme, camX, seed){
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
 
+  // Fluffy scrolling clouds for the bright, open-sky themes — the biggest
+  // single contributor to that lively, energetic pixel-art sky look.
+  if(theme === 'fjord' || theme === 'savanna' || theme === 'rainforest'){
+    tiledDecor(camX, 0.08, 320, seed + 2200, (x, sd) => {
+      const y = 60 + seededRand(sd+1) * 90;
+      const scale = 0.8 + seededRand(sd+2) * 0.6;
+      drawCloudPuff(x, y, scale);
+    });
+  }
+
   // far layer
   ctx.fillStyle = t.far;
+  ctx.strokeStyle = t.outline || 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 3;
   const farY = 360;
   if(theme === 'fjord' || theme === 'volcanic'){
     tiledDecor(camX, 0.15, 260, seed, (x, sd) => {
       const h = 70 + seededRand(sd+2) * 60;
       ctx.beginPath();
       ctx.moveTo(x - 90, farY); ctx.lineTo(x, farY - h); ctx.lineTo(x + 90, farY);
-      ctx.closePath(); ctx.fill();
+      ctx.closePath(); ctx.fill(); ctx.stroke();
     });
   } else {
     tiledDecor(camX, 0.15, 240, seed, (x, sd) => {
       const r = 55 + seededRand(sd+2) * 40;
-      ctx.beginPath(); ctx.ellipse(x, farY, r, r*0.55, 0, Math.PI, 2*Math.PI); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x, farY, r, r*0.55, 0, Math.PI, 2*Math.PI); ctx.fill(); ctx.stroke();
     });
   }
 
@@ -1124,7 +1163,7 @@ function renderBackground(theme, camX, seed){
   const nearY = 420;
   tiledDecor(camX, 0.35, 200, seed + 500, (x, sd) => {
     const r = 45 + seededRand(sd+2) * 35;
-    ctx.beginPath(); ctx.ellipse(x, nearY, r, r*0.5, 0, Math.PI, 2*Math.PI); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, nearY, r, r*0.5, 0, Math.PI, 2*Math.PI); ctx.fill(); ctx.stroke();
   });
 
   // theme-specific accents
@@ -1262,6 +1301,10 @@ function renderSolids(){
     ctx.fillStyle = t.groundDk;
     ctx.fillRect(sx, s.y + s.h - 4, s.w, 4);
     drawGroundTexture(level.theme, sx, s);
+    // Crisp outline along the top edge for a bolder, more graphic look.
+    ctx.strokeStyle = t.outline || 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(sx, s.y + 1.5); ctx.lineTo(sx + s.w, s.y + 1.5); ctx.stroke();
     // Bright edge accent marking exactly where a ledge drops into a pit.
     ctx.fillStyle = 'rgba(255,220,150,0.95)';
     if(i > 0) ctx.fillRect(sx, s.y, 3, s.h);
@@ -1274,6 +1317,9 @@ function renderSolids(){
     ctx.fillRect(sx, s.y, s.w, s.h);
     ctx.fillStyle = t.platformDk;
     ctx.fillRect(sx, s.y + s.h - 4, s.w, 4);
+    ctx.strokeStyle = t.outline || 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(sx + 1.25, s.y + 1.25, s.w - 2.5, s.h - 2.5);
   }
   if(level.hasBoss && !level.bossDefeated && level.barrier){
     const b = level.barrier;
@@ -1983,8 +2029,8 @@ function renderStoryIntro(){
     other + ' has vanished — last seen near the fjords, dragged off by',
     'Ragga Muffin and locked away in the Sunken Vault.',
     '',
-    hero + ' isn\u2019t waiting around. Guns loaded, boots laced,',
-    'it\u2019s time to cross fjords, savanna, fire and jungle — and bring them home.'
+    hero + ' isn\u2019t waiting around. Guns loaded, sun screen applied, boots laced,',
+    'it\u2019s time to cross fjords, savanna, fire and jungle — and bring her baby home.'
   ];
   lines.forEach((line, i) => ctx.fillText(line, W/2, 318 + i*22));
 
