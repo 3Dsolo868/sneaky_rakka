@@ -88,6 +88,11 @@
 <body>
   <div id="wrap">
     <canvas id="game" width="960" height="540"></canvas>
+    <video id="endVideo" muted playsinline preload="auto" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#0b0c14; display:none; z-index:5; border-radius:14px;">
+      <source src="end_video.mp4" type="video/mp4">
+      <source src="end_video.webm" type="video/webm">
+    </video>
+    <div id="endVideoSkipHint" style="position:absolute; left:0; right:0; bottom:18px; text-align:center; font:12px 'Nunito', sans-serif; color:rgba(255,255,255,0.65); display:none; z-index:6; pointer-events:none;">press enter to skip</div>
     <button id="muteBtn" title="Mute (M)">🔊</button>
     <button id="btnPause" title="Pause (Esc)">⏸</button>
     <div id="rotateHint">Tip: rotate your phone sideways for a bigger view</div>
@@ -117,6 +122,8 @@
 // ---------- Canvas setup ----------
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const endVideoEl = document.getElementById('endVideo');
+const endVideoSkipHint = document.getElementById('endVideoSkipHint');
 // W/H are the LOGICAL coordinate space every drawing call in this file uses —
 // unchanged regardless of how large the canvas actually renders on screen.
 // fitCanvasToDisplay() below matches the canvas's real pixel buffer to its
@@ -173,6 +180,14 @@ const SPRITE = {
 };
 // Boss art — Ragga Muffin, used both in the level-5 fight and the kidnap cutscene.
 const BOSS_IMG = (() => { const i = new Image(); i.src = 'raggamuffin_sprite.png'; return i; })();
+// Regular enemy art — real creature illustrations instead of plain shapes.
+// All four face right by default, matching the game's facing convention.
+const ENEMY_IMG = {
+  ant:        (() => { const i = new Image(); i.src = 'ant_enemy.png'; return i; })(),
+  grasshopper:(() => { const i = new Image(); i.src = 'grasshopper_enemy.png'; return i; })(),
+  bee:        (() => { const i = new Image(); i.src = 'bee_enemy.png'; return i; })(),
+  mosquito:   (() => { const i = new Image(); i.src = 'mosquito_enemy.png'; return i; })(),
+};
 
 // ---------- Audio (tiny synth, no files needed) ----------
 let actx = null;
@@ -277,10 +292,14 @@ function scheduleMusic(){
 
 // ---------- Input ----------
 const keys = {};
-const KEYS_CAPTURED = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD','KeyR','KeyX','KeyJ','Enter','Escape','KeyM'];
+const KEYS_CAPTURED = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD','KeyR','KeyX','KeyJ','KeyI','KeyV','KeyH','KeyP','KeyN','KeyL','Enter','Escape','KeyM'];
 // Named so touch controls can call the exact same code path as a real
 // keyboard event — one input pipeline, two ways to trigger it.
 let heartComboActive = false;
+let godComboActive = false;
+let healComboActive = false;
+let skipComboActive = false;
+let godMode = false;
 function handleKeyDown(e){
   ensureAudio();
   if(KEYS_CAPTURED.includes(e.code)) e.preventDefault();
@@ -292,10 +311,35 @@ function handleKeyDown(e){
     heartComboActive = true;
     spawnHeartShower();
   }
+  // Secret cheats — I+V toggles invincibility, H+P fully heals, N+L skips
+  // to the next level. All harmless if triggered outside gameplay.
+  if(keys['KeyI'] && keys['KeyV'] && !godComboActive){
+    godComboActive = true;
+    godMode = !godMode;
+    sfx.confirm();
+  }
+  if(keys['KeyH'] && keys['KeyP'] && !healComboActive){
+    healComboActive = true;
+    if(state === 'playing' && hearts < maxHearts){
+      hearts = maxHearts;
+      sfx.heart();
+      spawnSpark(player.x + player.w/2, player.y + player.h/2, '#ff6b81');
+    }
+  }
+  if(keys['KeyN'] && keys['KeyL'] && !skipComboActive){
+    skipComboActive = true;
+    if(state === 'playing'){
+      if(level.isFinal){ state = 'rescue'; stateTimer = 0; camera.x = 0; sfx.win(); }
+      else { state = 'levelClear'; stateTimer = 0; sfx.confirm(); }
+    }
+  }
 }
 function handleKeyUp(e){
   keys[e.code] = false;
   if(e.code === 'KeyR' || e.code === 'KeyS') heartComboActive = false;
+  if(e.code === 'KeyI' || e.code === 'KeyV') godComboActive = false;
+  if(e.code === 'KeyH' || e.code === 'KeyP') healComboActive = false;
+  if(e.code === 'KeyN' || e.code === 'KeyL') skipComboActive = false;
 }
 window.addEventListener('keydown', handleKeyDown);
 window.addEventListener('keyup', handleKeyUp);
@@ -453,7 +497,7 @@ function buildLevel(def){
   const platforms = (def.platforms || []).map(p => plat(p[0], p[1], p[2]));
   const solids = groundRects.concat(platforms);
 
-  const enemies = (def.enemies || []).map(e => makeEnemy(e));
+  const enemies = (def.enemies || []).map((e, i) => makeEnemy(e, i));
   const pickups = (def.pickups || []).map(p => ({
     x:p[1], y:p[2], w: p[0]==='gem'?18:(p[0]==='heart'?22:26), h: p[0]==='gem'?18:(p[0]==='heart'?20:26),
     type:p[0], collected:false
@@ -478,25 +522,26 @@ function buildLevel(def){
   return level;
 }
 
-function makeEnemy(e){
+function makeEnemy(e, idx){
   // e: [type, x, y, ...extra]
   const base = { type:e[0], x:e[1], y:e[2], vx:0, vy:0, dead:false, hp:1, hurtT:0 };
   if(e[0] === 'walker'){
     return Object.assign(base, {
-      w:32, h:44, y:e[2]-44, patrolMin:e[3], patrolMax:e[4], vx: e[5] || -1.3,
-      stompable:true, hp:1, animT: Math.random()*10
+      w:32, h:44, y:e[2]-44, patrolMin:e[3], patrolMax:e[4], vx: e[5] || -1.5,
+      stompable:true, hp:1, animT: Math.random()*10,
+      creature: (idx % 2 === 0) ? 'ant' : 'grasshopper'
     });
   }
   if(e[0] === 'shooter'){
     return Object.assign(base, {
       w:30, h:34, y:e[2]-34, timer: e[3]||60, fireRate: e[3]||70,
-      stompable:false, hp:2
+      stompable:false, hp:2, creature:'bee'
     });
   }
   if(e[0] === 'flyer'){
     return Object.assign(base, {
       w:30, h:26, baseY:e[2], y:e[2], patrolMin:e[3], patrolMax:e[4], vx: e[5]||1.6,
-      t: Math.random()*6, stompable:false, hp:1
+      t: Math.random()*6, stompable:false, hp:1, creature:'mosquito'
     });
   }
   if(e[0] === 'boss'){
@@ -515,7 +560,7 @@ function makeEnemy(e){
 //          shooter ['shooter', x, groundY, fireRateFrames?]
 //          flyer   ['flyer', x, baseY, patrolMin, patrolMax, speed?]
 //          boss    ['boss', x, baseY]
-const LEVEL_DEFS = [
+const LEVEL_DEFS_BASE = [
   { // LEVEL 1 — Fjord (Iceland, easy intro)
     name:'The Frozen Fjord', theme:'fjord', bgSeed:11, quip:'bring the jacket, dummy',
     pattern:'GGGGGGGGGG.GGGGGGGGG.GGGGGGGGGGG..GGGGGGGGGGGGGGGG',
@@ -525,7 +570,7 @@ const LEVEL_DEFS = [
       ['walker', 500, GROUND_Y, 450, 650],
       ['walker', 1500, GROUND_Y, 1450, 1650],
       ['walker', 2900, GROUND_Y, 2850, 3100],
-      ['shooter', 2000, GROUND_Y, 100],
+      ['shooter', 2000, GROUND_Y, 82],
     ],
     pickups:[
       ['gem',300,430], ['gem',760,350], ['gem',1850,360], ['gem',3050,430],
@@ -543,7 +588,7 @@ const LEVEL_DEFS = [
       ['walker', 1100, GROUND_Y, 1050, 1300],
       ['walker', 2000, GROUND_Y, 1950, 2200],
       ['walker', 3100, GROUND_Y, 3040, 3300],
-      ['flyer', 1650, 310, 1600, 1950, 1.6],
+      ['flyer', 1650, 310, 1600, 1950, 1.84],
     ],
     pickups:[
       ['gem',200,430], ['gem',1200,430], ['gem',2600,430], ['gem',3450,430],
@@ -552,7 +597,7 @@ const LEVEL_DEFS = [
     goalX: 3550,
   },
   { // LEVEL 3 — Volcanic Highlands (Iceland variation, harder)
-    name:'The Volcanic Highlands', theme:'volcanic', bgSeed:33, quip:'it\u2019s not you, it\u2019s 900 degrees',
+    name:'The Volcanic Highlands', theme:'volcanic', bgSeed:33, quip:'It\u2019s not the volcanic heat, it\u2019s you who is hot, baby',
     pattern:'GGGGGGGG..GGGGGGGG..GGGGGG..GGGGGGGG..GGGGGG..GGGG',
     platforms:[ [560,390,90], [1520,380,90], [2060,400,80], [3120,390,100] ],
     start:[80, GROUND_Y-54],
@@ -560,9 +605,9 @@ const LEVEL_DEFS = [
       ['walker', 300, GROUND_Y, 240, 460],
       ['walker', 1400, GROUND_Y, 1340, 1560],
       ['walker', 2600, GROUND_Y, 2540, 2800],
-      ['shooter', 900, GROUND_Y, 90],
-      ['shooter', 2150, GROUND_Y, 90],
-      ['flyer', 1850, 320, 1780, 2050, 1.8],
+      ['shooter', 900, GROUND_Y, 75],
+      ['shooter', 2150, GROUND_Y, 75],
+      ['flyer', 1850, 320, 1780, 2050, 2.07],
     ],
     pickups:[
       ['gem',150,430], ['gem',600,360], ['gem',1600,430], ['gem',2950,430],
@@ -580,9 +625,9 @@ const LEVEL_DEFS = [
       ['walker', 1200, GROUND_Y, 1140, 1400],
       ['walker', 2200, GROUND_Y, 2140, 2400],
       ['walker', 3000, GROUND_Y, 2940, 3200],
-      ['shooter', 1700, GROUND_Y, 90],
-      ['flyer', 900, 330, 800, 1050, 1.6],
-      ['flyer', 2550, 310, 2500, 2800, 1.8],
+      ['shooter', 1700, GROUND_Y, 75],
+      ['flyer', 900, 330, 800, 1050, 1.84],
+      ['flyer', 2550, 310, 2500, 2800, 2.07],
     ],
     pickups:[
       ['gem',250,430], ['gem',1950,300], ['gem',2450,360], ['gem',3400,430],
@@ -601,9 +646,9 @@ const LEVEL_DEFS = [
       ['walker', 350, GROUND_Y, 290, 520],
       ['walker', 1300, GROUND_Y, 1240, 1480],
       ['walker', 2350, GROUND_Y, 2290, 2560],
-      ['shooter', 750, GROUND_Y, 90],
-      ['shooter', 1850, GROUND_Y, 90],
-      ['flyer', 2000, 320, 1900, 2250, 1.7],
+      ['shooter', 750, GROUND_Y, 75],
+      ['shooter', 1850, GROUND_Y, 75],
+      ['flyer', 2000, 320, 1900, 2250, 1.95],
       ['boss', 3220, GROUND_Y-160],
     ],
     pickups:[
@@ -616,6 +661,61 @@ const LEVEL_DEFS = [
     isFinal:true,
   },
 ];
+
+// Every level is doubled in length by replaying its own (already
+// gap-tested) layout a second time, joined by a short solid connector run —
+// this guarantees the extended stretch is exactly as safe as the original
+// rather than hand-designing new layouts from scratch. The one level with a
+// boss keeps a single boss encounter: only the corridor before the barrier
+// gets duplicated, and the arena+boss section is appended once more at the
+// new, later position.
+function extendLevel(def){
+  const CONNECTOR_TILES = 6;
+  const connector = 'G'.repeat(CONNECTOR_TILES);
+  const connectorWidth = CONNECTOR_TILES * TILE;
+
+  const splitTile = def.barrier ? Math.floor(def.barrier[0] / TILE) : null;
+  const basePattern = splitTile != null ? def.pattern.slice(0, splitTile) : def.pattern;
+  const tailPattern = splitTile != null ? def.pattern.slice(splitTile) : '';
+  const baseWidth = basePattern.length * TILE;
+  const dupShift = baseWidth + connectorWidth;         // shift for the duplicated base copy
+  const tailItemShift = baseWidth + connectorWidth * 2; // shift for the arena/boss tail, if any
+
+  const newPattern = tailPattern
+    ? basePattern + connector + basePattern + connector + tailPattern
+    : basePattern + connector + basePattern;
+
+  function inBase(x){ return splitTile == null || x < baseWidth; }
+  function shiftPlatform(p){ return [p[0] + (inBase(p[0]) ? dupShift : tailItemShift), p[1], p[2]]; }
+  function shiftPickup(p){ return [p[0], p[1] + (inBase(p[1]) ? dupShift : tailItemShift), p[2]]; }
+  function shiftEnemy(e){
+    const shift = inBase(e[1]) ? dupShift : tailItemShift;
+    const copy = e.slice();
+    copy[1] += shift;
+    if((copy[0] === 'walker' || copy[0] === 'flyer') && copy[3] != null){
+      copy[3] += shift; copy[4] += shift;
+    }
+    return copy;
+  }
+
+  const baseEnemies = (def.enemies || []).filter(e => inBase(e[1]));
+  const basePickups = (def.pickups || []).filter(p => inBase(p[1]));
+  const basePlatforms = (def.platforms || []).filter(p => inBase(p[0]));
+  const tailEnemies = (def.enemies || []).filter(e => !inBase(e[1]));
+  const tailPickups = (def.pickups || []).filter(p => !inBase(p[1]));
+  const tailPlatforms = (def.platforms || []).filter(p => !inBase(p[0]));
+
+  const newDef = Object.assign({}, def, {
+    pattern: newPattern,
+    platforms: basePlatforms.concat(basePlatforms.map(shiftPlatform), tailPlatforms.map(shiftPlatform)),
+    enemies: baseEnemies.concat(baseEnemies.map(shiftEnemy), tailEnemies.map(shiftEnemy)),
+    pickups: basePickups.concat(basePickups.map(shiftPickup), tailPickups.map(shiftPickup)),
+    goalX: def.goalX + (inBase(def.goalX) ? dupShift : tailItemShift),
+  });
+  if(def.barrier) newDef.barrier = [def.barrier[0] + tailItemShift, def.barrier[1]];
+  return newDef;
+}
+const LEVEL_DEFS = LEVEL_DEFS_BASE.map(extendLevel);
 
 // ---------- Game state ----------
 let state = 'title';   // title, select, storyIntro, playing, paused, levelClear, rescue, win, gameOver
@@ -756,12 +856,30 @@ function fireProjectile(from){
   sfx.shoot();
 }
 function fireEnemyProjectile(en){
-  const dir = (player.x + player.w/2) < (en.x + en.w/2) ? -1 : 1;
-  projectiles.push({ x: en.x + en.w/2 + dir*8, y: en.y + en.h*0.4, w:9, h:9, vx: dir*6, life:130, friendly:false });
+  // Aim at wherever the player actually is (not just a flat horizontal shot) —
+  // this matters a lot for the boss, who hovers well above ground level while
+  // the player stands on the ground; a purely horizontal shot would sail past
+  // at head height and could never actually connect.
+  const fromX = en.x + en.w/2, fromY = en.y + en.h*0.4;
+  const toX = player.x + player.w/2, toY = player.y + player.h/2;
+  const dx = toX - fromX, dy = toY - fromY;
+  const dist = Math.max(1, Math.hypot(dx, dy));
+  const speed = 6.5;
+  const vx = (dx/dist) * speed, vy = (dy/dist) * speed;
+  const dir = vx >= 0 ? 1 : -1;
+  projectiles.push({ x: fromX + dir*8, y: fromY, w:9, h:9, vx, vy, life:130, friendly:false });
   sfx.enemyShoot();
 }
 let fallQuipTimer = 0;
 function damagePlayer(amount, isFallDeath){
+  if(godMode){
+    // Invincible to harm, but still reposition out of a pit so falling
+    // doesn't leave you stuck endlessly dropping with nothing below —
+    // and the little "clumsy" moment still gets to show, since that's
+    // just for fun, not a penalty.
+    if(isFallDeath){ respawnAtCheckpoint(); fallQuipTimer = 260; }
+    return;
+  }
   if(player.invuln > 0 && !isFallDeath) return;
   hearts -= amount;
   player.invuln = 70;
@@ -890,7 +1008,7 @@ function updateBoss(en, dt){
 
 // ---------- Update: projectiles ----------
 function updateProjectiles(){
-  for(const pr of projectiles) pr.x += pr.vx;
+  for(const pr of projectiles){ pr.x += pr.vx; pr.y += (pr.vy || 0); }
   for(const pr of projectiles) pr.life--;
   projectiles = projectiles.filter(pr =>
     pr.life > 0 && pr.x > camera.x - 60 && pr.x < camera.x + W + 60
@@ -1311,36 +1429,64 @@ function drawCharacterProcedural(sx, y, w, h, facing, walkT, onGround, type, sho
 }
 
 // ---------- Rendering: enemies ----------
+// Draws an enemy's creature art centered at (cx,cy) with a given target
+// height (width follows the source image's own aspect ratio), optionally
+// mirrored, with the same white hit-flash used elsewhere. Returns false if
+// the image isn't loaded yet so the caller can fall back to a simple shape.
+function drawEnemySprite(img, cx, cy, targetH, flipX, flash){
+  if(!img || !img.complete || img.naturalWidth === 0) return false;
+  const h = targetH;
+  const w = h * (img.naturalWidth / img.naturalHeight);
+  ctx.save();
+  ctx.translate(cx, cy);
+  if(flipX) ctx.scale(-1, 1);
+  ctx.drawImage(img, -w/2, -h/2, w, h);
+  if(flash){
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillRect(-w/2, -h/2, w, h);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  ctx.restore();
+  return true;
+}
 function drawEnemy(en){
   if(en.dead) return;
   const sx = en.x - camera.x;
   if(sx + en.w < -30 || sx > W + 30) return;
   const flash = en.hurtT > 0;
   if(en.type === 'walker'){
-    ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 0);
     const bob = Math.sin(en.animT) * 2;
-    ctx.beginPath();
-    ctx.ellipse(sx + en.w/2, en.y + en.h/2 + bob, en.w/2, en.h/2, 0, 0, Math.PI*2);
-    ctx.fill();
-    ctx.fillStyle = '#241d16';
-    ctx.beginPath(); ctx.arc(sx + en.w*0.32, en.y + en.h*0.42 + bob, 3, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(sx + en.w*0.68, en.y + en.h*0.42 + bob, 3, 0, Math.PI*2); ctx.fill();
+    const targetH = en.h * 1.9;
+    const cx = sx + en.w/2;
+    const cy = (en.y + en.h + bob) - targetH/2; // bottom-anchored so feet sit on the ground
+    const flip = en.vx < 0; // creature art faces right by default
+    if(!drawEnemySprite(ENEMY_IMG[en.creature], cx, cy, targetH, flip, flash)){
+      ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 0);
+      ctx.beginPath();
+      ctx.ellipse(sx + en.w/2, en.y + en.h/2 + bob, en.w/2, en.h/2, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
   } else if(en.type === 'shooter'){
-    ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 1);
-    ctx.fillRect(sx, en.y + en.h*0.3, en.w, en.h*0.7);
-    ctx.beginPath(); ctx.arc(sx + en.w/2, en.y + en.h*0.28, en.w*0.4, Math.PI, 2*Math.PI); ctx.fill();
-    ctx.fillStyle = '#ffb347';
-    ctx.beginPath(); ctx.arc(sx + en.w/2, en.y + en.h*0.3, 4, 0, Math.PI*2); ctx.fill();
+    const targetH = en.h * 2.1;
+    const cx = sx + en.w/2;
+    const cy = (en.y + en.h) - targetH/2;
+    const flip = player.x < en.x; // faces toward the player, like a little sentry
+    if(!drawEnemySprite(ENEMY_IMG[en.creature], cx, cy, targetH, flip, flash)){
+      ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 1);
+      ctx.fillRect(sx, en.y + en.h*0.3, en.w, en.h*0.7);
+      ctx.beginPath(); ctx.arc(sx + en.w/2, en.y + en.h*0.28, en.w*0.4, Math.PI, 2*Math.PI); ctx.fill();
+    }
   } else if(en.type === 'flyer'){
-    ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 2);
-    ctx.beginPath();
-    ctx.ellipse(sx + en.w/2, en.y + en.h/2, en.w/2, en.h/2, 0, 0, Math.PI*2);
-    ctx.fill();
-    const wingFlap = Math.sin(frameCount*0.4) * 6;
-    ctx.strokeStyle = themeEnemyColor(level.theme, 2);
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(sx, en.y+en.h/2); ctx.lineTo(sx - 10, en.y+en.h/2 - wingFlap); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(sx+en.w, en.y+en.h/2); ctx.lineTo(sx+en.w+10, en.y+en.h/2 - wingFlap); ctx.stroke();
+    const targetH = en.h * 2.3;
+    const cx = sx + en.w/2, cy = en.y + en.h/2;
+    const flip = en.vx < 0;
+    if(!drawEnemySprite(ENEMY_IMG[en.creature], cx, cy, targetH, flip, flash)){
+      ctx.fillStyle = flash ? '#ffffff' : themeEnemyColor(level.theme, 2);
+      ctx.beginPath();
+      ctx.ellipse(sx + en.w/2, en.y + en.h/2, en.w/2, en.h/2, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
   } else if(en.type === 'boss'){
     drawBoss(en, sx, flash);
   }
@@ -1600,6 +1746,16 @@ function drawHUD(){
   ctx.fillStyle = '#3fa9e0';
   ctx.font = 'bold 14px sans-serif';
   ctx.fillText('◆ ' + gems, W - 20, 30);
+
+  if(godMode){
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 11px "Nunito", sans-serif';
+    ctx.fillStyle = '#ffde59';
+    const pulse = 0.7 + Math.sin(frameCount*0.12) * 0.3;
+    ctx.globalAlpha = pulse;
+    ctx.fillText('\u2728 GOD MODE \u2728', W/2, 30);
+    ctx.globalAlpha = 1;
+  }
 
   if(levelBannerT > 0){
     const a = clamp(levelBannerT / 40, 0, 1) * (levelBannerT > 280 ? clamp((320-levelBannerT)/40,0,1) : 1);
@@ -1963,9 +2119,42 @@ function renderWin(){
     ctx.fillText('PRESS ENTER TO CONTINUE', W/2, 460);
   }
   if(stateTimer > 40 && justPressed('Enter')){
-    state = 'credits'; creditsScrollY = 0; stateTimer = 0; sfx.confirm();
+    state = 'endVideo'; stateTimer = 0; sfx.confirm();
   }
 }
+
+// A short animated clip between the win screen and the credits. It's her
+// own custom character art, played once, muted (browsers block autoplay
+// with sound anyway, and this doesn't need it), skippable like every other
+// cutscene in the game.
+let endVideoStarted = false;
+function renderEndVideo(){
+  drawScreenBackdrop();
+  if(!endVideoStarted){
+    endVideoStarted = true;
+    try{
+      endVideoEl.currentTime = 0;
+      endVideoEl.style.display = 'block';
+      endVideoSkipHint.style.display = 'block';
+      const p = endVideoEl.play();
+      if(p && p.catch) p.catch(() => {}); // autoplay may be blocked; skip hint still lets them move on
+    } catch(err){
+      endEndVideo(); // if video playback fails outright, don't strand the player on a blank screen
+    }
+  }
+  if(justPressed('Enter') || endVideoEl.ended){
+    endEndVideo();
+  }
+}
+function endEndVideo(){
+  endVideoStarted = false;
+  try{ endVideoEl.pause(); } catch(err){}
+  endVideoEl.style.display = 'none';
+  endVideoSkipHint.style.display = 'none';
+  state = 'credits'; creditsScrollY = 0; stateTimer = 0;
+}
+endVideoEl.addEventListener('click', () => { if(state === 'endVideo') endEndVideo(); });
+endVideoEl.addEventListener('error', () => { if(state === 'endVideo') endEndVideo(); }); // never strand the player on a broken video
 
 // A warm, funny credits roll — the closing capstone of the whole gift.
 const CREDITS_LINES = [
@@ -1975,7 +2164,6 @@ const CREDITS_LINES = [
   { text:'Stuart', size:19, color:'#fff', gap:56 },
   { text:'Ragga Muffin\u2019s Interstacles ..... Himself', size:13, color:'#ffb3c1', bold:true, gap:28 },
   { text:'Jacket Reminder Services ..... A Concerned Voice', size:13, color:'#ffb3c1', bold:true, gap:28 },
-  { text:'Heart Shower Technician ..... R + S', size:13, color:'#ffb3c1', bold:true, gap:28 },
   { text:'Pit-Falling Choreography ..... You, mostly', size:13, color:'#ffb3c1', bold:true, gap:28 },
   { text:'Snacks, Executive Producer of ..... TBD', size:13, color:'#ffb3c1', bold:true, gap:56 },
   { text:'Made with love, for you.', size:15, color:'#ffb3c1', bold:true, gap:34 },
@@ -2101,6 +2289,7 @@ function render(){
   else if(state === 'levelClear') renderLevelClear();
   else if(state === 'rescue') renderRescue();
   else if(state === 'win') renderWin();
+  else if(state === 'endVideo') renderEndVideo();
   else if(state === 'credits') renderCredits();
   else if(state === 'gameOver') renderGameOver();
   drawParticles(); // universal overlay so the heart shower renders over any screen
